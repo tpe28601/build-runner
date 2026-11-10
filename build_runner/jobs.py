@@ -1,0 +1,328 @@
+"""Shared job registry, concurrency control, and Windows process lifecycle."""
+
+from contextlib import contextmanager
+import ctypes
+from ctypes import wintypes
+from datetime import datetime, timezone
+import os
+import re
+import subprocess
+import sys
+import time
+from uuid import uuid4
+
+from . import artifacts, history, paramsets, recipes, workspaces
+from .paths import ROOT, ToolError, file_lock, read_json, write_json
+
+ACTIVE = {"queued", "running"}
+
+
+def now():
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+
+def lock(data):
+    return file_lock(data / "jobs" / ".lock")
+
+
+def git_lock_path(data):
+    return data / "jobs" / ".git-write.lock"
+
+
+def job_dir(data, job_id):
+    if not re.fullmatch(r"[a-f0-9]{32}", job_id):
+        raise ToolError("INVALID_JOB_ID", f"Invalid job ID: {job_id}")
+    return data / "jobs" / job_id
+
+
+def get_job(data, job_id):
+    row = read_json(job_dir(data, job_id) / "status.json")
+    if row is None:
+        raise ToolError("JOB_NOT_FOUND", f"Job not found: {job_id}")
+    return row
+
+
+def save(data, row):
+    write_json(job_dir(data, row["id"]) / "status.json", row)
+
+
+def list_jobs(data):
+    rows = [read_json(path) for path in (data / "jobs").glob("*/status.json")]
+    return sorted((row for row in rows if row is not None), key=lambda row: (row["queuedAt"], row["id"]))
+
+
+@contextmanager
+def process_token(pid, wait_ms=0):
+    """Keep the Windows process handle open while using its creation timestamp."""
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = (wintypes.HANDLE,)
+    filetime = ctypes.POINTER(wintypes.FILETIME)
+    kernel.GetProcessTimes.argtypes = (wintypes.HANDLE, filetime, filetime, filetime, filetime)
+    kernel.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+    kernel.WaitForSingleObject.restype = wintypes.DWORD
+    handle = kernel.OpenProcess(0x101000, False, pid)  # SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION
+    if not handle:
+        if ctypes.get_last_error() != 87:  # ERROR_INVALID_PARAMETER: PID no longer exists
+            raise ctypes.WinError(ctypes.get_last_error())
+        yield None
+        return
+    try:
+        created, exited, kernel_time, user_time = (wintypes.FILETIME() for _ in range(4))
+        if not kernel.GetProcessTimes(handle, created, exited, kernel_time, user_time):
+            raise ctypes.WinError(ctypes.get_last_error())
+        waited = kernel.WaitForSingleObject(handle, wait_ms)
+        if waited not in (0, 258):  # WAIT_OBJECT_0 or WAIT_TIMEOUT
+            raise ctypes.WinError(ctypes.get_last_error())
+        yield (created.dwHighDateTime << 32) | created.dwLowDateTime if waited == 258 else None
+    finally:
+        kernel.CloseHandle(handle)
+
+
+def runner_matches(row, token):
+    return token is not None and token == row.get("pidToken")
+
+
+def recover_dead(data, rows):
+    for row in rows:
+        if row["state"] == "running":
+            with process_token(row["pid"]) as token:
+                if not runner_matches(row, token):
+                    finish(data, row, "failed", 1, message="Runner exited before recording a result.")
+
+
+def reconcile(data):
+    rows = list_jobs(data)
+    for row in rows:
+        if row["state"] == "running":
+            with process_token(row["pid"]) as token:
+                alive = runner_matches(row, token)
+            if not alive:
+                with lock(data):
+                    dispatch(data)
+                return list_jobs(data)
+    return rows
+
+
+def settings(data):
+    result = read_json(data / "settings.json", {})
+    if not isinstance(result, dict):
+        raise ToolError("INVALID_SETTINGS", "settings.json must contain an object.")
+    return result
+
+
+def limit(data):
+    value = settings(data).get("maxConcurrentJobs", 2)
+    if type(value) is not int or value < 0:
+        raise ToolError("INVALID_CONCURRENCY", "maxConcurrentJobs must be a nonnegative integer.")
+    return value
+
+
+def set_limit(data, value):
+    if type(value) is not int or value < 0:
+        raise ToolError("INVALID_CONCURRENCY", "Concurrency must be a nonnegative integer.")
+    with lock(data):
+        values = settings(data)
+        values["maxConcurrentJobs"] = value
+        write_json(data / "settings.json", values)
+        dispatch(data)
+    return value
+
+
+def check_conflicts(data, path, common, force=False, *, rows=None):
+    warnings = []
+    key = workspaces.path_key(path)
+    for row in list_jobs(data) if rows is None else rows:
+        if row["state"] not in ACTIVE:
+            continue
+        if workspaces.path_key(row["workspacePath"]) == key:
+            if not force:
+                raise ToolError("WORKSPACE_CONFLICT", "This folder already has an active job.", jobId=row["id"])
+            warnings.append({"code": "WORKSPACE_CONFLICT", "message": "Same workspace folder.", "jobId": row["id"]})
+        elif common and row.get("gitCommonDir") == common:
+            warnings.append({"code": "SHARED_GIT_DIR", "message": "Workspaces share a Git repository.", "jobId": row["id"]})
+    return warnings
+
+
+def job_plan(workspace, recipe, recipe_name, preset, table, overrides, artifact_rules):
+    plan = recipes.prepare(workspace, recipe, preset, table=table, overrides=overrides)
+    plan["artifactRules"] = artifact_rules
+    path = str(plan["workspacePath"])
+    git = workspaces.git_state(path, include_dirty=False)
+    preview = {
+        "workspace": workspace["name"],
+        "workspaceId": workspace["id"],
+        "workspacePath": path,
+        "recipe": recipe.get("name") or recipe_name,
+        "argvPreview": [step["argv"] for step in plan["steps"]],
+        "branch": git["branch"],
+        "commit": git["commit"],
+        "gitCommonDir": git["gitCommonDir"],
+        "params": plan["params"],
+    }
+    return preview, plan
+
+
+def start(data, workspace, recipe_name, preset=None, *, force=False, dry_run=False):
+    rows, warnings = start_many(data, [workspace], recipe_name, preset, force=force, dry_run=dry_run)
+    return rows[0], warnings
+
+
+def start_many(data, workspace_rows, recipe_name, preset=None, *, force=False, dry_run=False, overrides=None,
+               restrict_values=False):
+    recipe = recipes.get_recipe(data, recipe_name)
+    uses_params = any(isinstance(step, dict) and step.get("enabled") is not False and step.get("useParams")
+                      for step in recipe["steps"])
+    table = paramsets.load(data, recipe["paramset"]) if uses_params and recipe.get("paramset") else None
+    artifact_rules = artifacts.load(data, recipe["artifacts"]) if recipe.get("artifacts") else None
+    if overrides is not None and not isinstance(overrides, dict):
+        raise ToolError("INVALID_PARAMS", "params must be an object.")
+    if restrict_values and table and overrides:
+        for param in table["params"]:
+            value = overrides.get(param["key"])
+            if (param["type"] == "value" and isinstance(value, str)
+                    and (re.search(r'[&|<>^%!()"\r\n\x00]', value) or value.lstrip().startswith(("-", "/", "@")))):
+                raise ToolError("INVALID_PARAM_VALUE", f"Unsafe free-form value for {param['flag']}.")
+    plans = [job_plan(row, recipe, recipe_name, preset, table, overrides, artifact_rules) for row in workspace_rows]
+    if not dry_run and os.name != "nt":
+        raise ToolError("WINDOWS_REQUIRED", "Running jobs requires Windows.", 5)
+
+    def validate(rows):
+        if git_lock_path(data).exists():
+            raise ToolError("JOB_BUSY", "A Git operation is in progress. Retry after it finishes.", 1)
+        warnings = []
+        for preview, _ in plans:
+            warnings.extend(check_conflicts(data, preview["workspacePath"], preview["gitCommonDir"], force, rows=rows))
+            rows.append({**preview, "state": "queued", "id": None})
+        return warnings
+
+    if dry_run:
+        return [preview for preview, _ in plans], validate(list_jobs(data))
+
+    with lock(data):
+        limit(data)
+        active = list_jobs(data)
+        recover_dead(data, active)
+        warnings = validate(active)
+        ids = []
+        for preview, plan in plans:
+            row = {
+                **preview,
+                "id": uuid4().hex, "state": "queued", "step": None,
+                "queuedAt": now(), "startedAt": None, "endedAt": None, "exitCode": None,
+                "pid": None, "argv": [],
+            }
+            folder = job_dir(data, row["id"])
+            write_json(folder / "plan.json", plan)
+            (folder / "build.log").touch()
+            save(data, row)
+            ids.append(row["id"])
+        dispatch(data)
+        return [get_job(data, job_id) for job_id in ids], warnings
+
+
+def dispatch(data, *, breakaway=False):
+    """Start queued jobs in order. Caller holds the job lock."""
+    maximum = limit(data)
+    rows = list_jobs(data)
+    recover_dead(data, rows)
+    flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+    if breakaway:
+        flags |= subprocess.CREATE_BREAKAWAY_FROM_JOB
+    running = sum(row["state"] == "running" for row in rows)
+    for row in rows:
+        if maximum and running >= maximum:
+            break
+        if row["state"] != "queued":
+            continue
+        try:
+            child = subprocess.Popen(
+                [sys.executable, "-m", "build_runner.runner", row["id"], "--data-dir", str(data)],
+                cwd=ROOT, shell=False, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=flags,
+            )
+        except OSError as exc:
+            finish(data, row, "failed", 1, message=f"Runner launch failed: {exc}")
+            continue
+        try:
+            with process_token(child.pid) as token:
+                if token is None:
+                    finish(data, row, "failed", 1, message="Runner exited during startup.")
+                    continue
+                row.update(state="running", pid=child.pid, pidToken=token, startedAt=now())
+            save(data, row)
+        except BaseException:
+            child.kill()
+            child.wait()
+            raise
+        running += 1
+
+
+def finish(data, row, state, exit_code, *, message=None, report=None):
+    """Finalize a job while holding the job lock."""
+    log_path = job_dir(data, row["id"]) / "build.log"
+    ended = now()
+    start = row["startedAt"]
+    elapsed = (datetime.fromisoformat(ended) - datetime.fromisoformat(start)).total_seconds() if start else 0
+    row.update(state=state, endedAt=ended, exitCode=exit_code)
+    if message:
+        row["message"] = message
+    try:
+        history.append(data, {
+            **row, "durationSec": elapsed, "rootError": report["rootError"] if report else None,
+            "logPath": str(log_path), "artifacts": row.get("artifacts", []),
+        })
+        history.prune(data, settings(data).get("historyRetention", {}))
+    except (OSError, ToolError) as exc:
+        row["historyError"] = str(exc)
+    save(data, row)
+    return row
+
+
+def kill_tree(pid):
+    run = subprocess.run(
+        ["taskkill.exe", "/PID", str(pid), "/T", "/F"], shell=False,
+        stdin=subprocess.DEVNULL, capture_output=True, timeout=10,
+    )
+    with process_token(pid, wait_ms=3000) as token:
+        if token is not None:
+            raise ToolError("STOP_FAILED", f"Process {pid} did not exit after taskkill.", 1,
+                            taskkillExitCode=run.returncode)
+
+
+def stop(data, job_id):
+    with lock(data):
+        row = get_job(data, job_id)
+        if row["state"] not in ACTIVE:
+            return row
+        if row["state"] == "running":
+            with process_token(row["pid"]) as token:
+                if runner_matches(row, token):
+                    kill_tree(row["pid"])
+                else:
+                    result = finish(data, row, "failed", 1, message="Runner exited before recording a result.")
+                    dispatch(data)
+                    return result
+        result = finish(data, row, "stopped", 4)
+        dispatch(data)
+        return result
+
+
+def wait(data, job_id):
+    next_dispatch = time.monotonic()
+    while True:
+        row = get_job(data, job_id)
+        if row["state"] not in ACTIVE:
+            return row
+        if row["state"] == "queued":
+            alive = False
+        else:
+            with process_token(row["pid"]) as token:
+                alive = runner_matches(row, token)
+        if not alive and time.monotonic() >= next_dispatch:
+            with lock(data):
+                dispatch(data)
+            next_dispatch = time.monotonic() + 1
+        time.sleep(0.2)

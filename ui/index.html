@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Build Runner</title>
+  <link rel="stylesheet" href="/ui-kit.css">
+  <link rel="stylesheet" href="/style.css">
+  <script src="/tb-theme.js"></script>
+  <script defer src="/tb-icons.js"></script>
+  <script defer src="/app.js"></script>
+  <script defer src="/config.js"></script>
+  <script defer src="/operations.js"></script>
+</head>
+<body class="tb-app">
+  <div class="shell">
+    <header class="topbar tb-hide-embedded">
+      <div class="tb-brand">
+        <span class="tb-brand__logo"><i data-tb-icon="terminal"></i></span>
+        <div class="tb-brand__text"><div class="tb-brand__name">Build Runner</div><div class="tb-brand__sub">Dev-Toolbox</div></div>
+      </div>
+      <label class="theme tb-field">
+        <span class="tb-field__label">外觀</span>
+        <select id="theme" class="tb-select">
+          <option value="system">跟隨系統</option><option value="light">淺色</option><option value="dark">深色</option>
+        </select>
+      </label>
+    </header>
+    <nav class="tb-tabs nav" aria-label="Build Runner 分頁">
+      <a class="tb-tab" href="#overview"><i data-tb-icon="layout-dashboard"></i>總覽</a>
+      <a class="tb-tab" href="#workspaces"><i data-tb-icon="folder-open"></i>Workspace</a>
+      <a class="tb-tab" href="#build"><i data-tb-icon="play"></i>Build</a>
+      <a class="tb-tab" href="#log"><i data-tb-icon="terminal"></i>Log</a>
+      <a class="tb-tab" href="#history"><i data-tb-icon="history"></i>歷史</a>
+      <a class="tb-tab" href="#recipes"><i data-tb-icon="git-branch"></i>流程設定</a>
+      <a class="tb-tab" href="#settings"><i data-tb-icon="settings"></i>設定</a>
+    </nav>
+
+    <main>
+      <section id="overview">
+        <div class="page-head">
+          <div><p class="kicker">JOB QUEUE</p><h1>總覽</h1><p>查看本機建置進度、排隊與最近結果。</p></div>
+          <a class="tb-btn tb-btn--primary" href="#build"><i data-tb-icon="play"></i>新增 Build</a>
+        </div>
+        <div class="metrics">
+          <div class="tb-card metric"><span class="tb-card__label"><span class="tb-dot tb-dot--ok"></span>執行中</span><strong id="running-count">0</strong></div>
+          <div class="tb-card metric"><span class="tb-card__label"><span class="tb-dot tb-dot--warn"></span>排隊中</span><strong id="queued-count">0</strong></div>
+          <div class="tb-card metric"><span class="tb-card__label">同時執行上限</span>
+            <form id="limit-form" class="row">
+              <input id="limit" class="tb-input" type="number" min="0" step="1" required aria-label="同時執行上限，0 代表不限">
+              <button class="tb-btn" type="submit">套用</button>
+            </form>
+            <span class="tb-field__hint">0 代表不限</span>
+          </div>
+        </div>
+        <h2 class="section-title">執行與排隊</h2>
+        <div id="active-jobs" class="job-grid"></div>
+        <h2 class="section-title">最近結果</h2>
+        <div id="recent-jobs" class="job-grid"></div>
+      </section>
+
+      <section id="workspaces" hidden>
+        <div class="page-head">
+          <div><p class="kicker">WORKSPACES</p><h1>Workspace</h1><p>登錄本機資料夾並查看 Git 狀態。</p></div>
+          <button id="workspace-build" class="tb-btn tb-btn--primary" disabled><i data-tb-icon="play"></i>用選取項目開始 Build</button>
+        </div>
+        <div class="columns">
+          <div id="workspace-list" class="stack"></div>
+          <div class="stack">
+            <form id="workspace-add" class="tb-card stack">
+              <h2>新增 Workspace</h2>
+              <label class="tb-field"><span class="tb-field__label">名稱</span><input name="name" class="tb-input" required placeholder="PlatformA"></label>
+              <label class="tb-field"><span class="tb-field__label">資料夾路徑</span><span class="tb-input-row"><input id="workspace-path" name="path" class="tb-input tb-input--mono" required placeholder="C:\src\sample"><button type="button" class="tb-btn tb-btn--icon" data-folder-target="workspace-path" aria-label="瀏覽 Workspace 資料夾" title="瀏覽資料夾"><i data-tb-icon="folder-open"></i></button></span></label>
+              <button class="tb-btn tb-btn--primary" type="submit"><i data-tb-icon="plus"></i>新增</button>
+            </form>
+            <form id="worktree-import" class="tb-card stack">
+              <h2>匯入 Git worktree</h2>
+              <label class="tb-field"><span class="tb-field__label">Repo 路徑</span><span class="tb-input-row"><input id="repo-path" name="path" class="tb-input tb-input--mono" required placeholder="C:\src\sample"><button type="button" class="tb-btn tb-btn--icon" data-folder-target="repo-path" aria-label="瀏覽 Repo 資料夾" title="瀏覽資料夾"><i data-tb-icon="folder-open"></i></button></span></label>
+              <button class="tb-btn" type="submit"><i data-tb-icon="search"></i>列出 worktree</button>
+              <div id="worktree-choices" class="stack"></div>
+              <button id="import-selected" class="tb-btn tb-btn--primary" type="button" hidden>匯入選取項目</button>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <section id="build" hidden>
+        <div class="page-head"><div><p class="kicker">NEW JOB</p><h1>Build</h1><p>選擇 Workspace 與 Recipe，檢查指令後開始建置。</p></div></div>
+        <div class="columns">
+          <form id="build-form" class="tb-card stack">
+            <fieldset>
+              <legend>1. 選擇 Workspace</legend>
+              <div id="build-workspaces" class="stack"></div>
+            </fieldset>
+            <label class="tb-field"><span class="tb-field__label build-label">2. 選擇 Recipe</span><select id="recipe" class="tb-select" required></select></label>
+            <fieldset id="build-parameters" class="stack" hidden>
+              <legend>3. 選擇參數</legend>
+              <div class="editor-fields">
+                <label class="tb-field"><span class="tb-field__label">Preset</span><select id="build-preset" class="tb-select"></select></label>
+                <label class="tb-field"><span class="tb-field__label">搜尋參數</span><input id="parameter-search" type="search" class="tb-input" placeholder="旗標或說明"></label>
+              </div>
+              <div class="row"><button type="button" class="tb-btn" id="save-preset">另存目前參數為 preset</button><span id="parameter-count" class="tb-small tb-muted"></span></div>
+              <div id="build-parameter-notes"></div>
+              <div id="parameter-groups" class="stack parameter-groups"></div>
+            </fieldset>
+            <label class="check"><input type="checkbox" id="allow-conflict"><span>我知道同一資料夾可能已有 Job，仍允許執行。</span></label>
+            <div class="row">
+              <button class="tb-btn" type="button" id="check-build"><i data-tb-icon="search"></i>檢查衝突</button>
+              <button class="tb-btn tb-btn--primary" type="submit"><i data-tb-icon="play"></i>開始 Build</button>
+            </div>
+          </form>
+          <div class="tb-card stack"><h2>指令預覽</h2><p id="preview-hint" class="tb-muted">選擇 Workspace 與 Recipe 後按「檢查衝突」。</p><div id="preview" class="stack"></div></div>
+        </div>
+      </section>
+
+      <section id="log" hidden>
+        <div class="page-head"><div><p class="kicker">BUILD OUTPUT</p><h1>Log</h1><p>即時查看輸出、搜尋錯誤並跳到相關行。</p></div><span id="log-state" class="tb-badge">尚未選擇 Job</span></div>
+        <div class="tb-card log-card stack">
+          <label class="tb-field"><span class="tb-field__label">Job</span><select id="log-job" class="tb-select"></select></label>
+          <div id="triage" class="triage" hidden></div>
+          <div class="row log-search">
+            <label class="tb-field search-field"><span class="tb-field__label">關鍵字</span><input type="search" id="log-query" class="tb-input" placeholder="例如 C2065"></label>
+            <div class="row filters" role="group" aria-label="Log 分類">
+              <button class="tb-btn" data-kind="error" aria-pressed="false">error <span>0</span></button>
+              <button class="tb-btn" data-kind="fail" aria-pressed="false">fail <span>0</span></button>
+              <button class="tb-btn" data-kind="warning" aria-pressed="false">warning <span>0</span></button>
+            </div>
+          </div>
+          <div class="row log-controls">
+            <div class="row">
+              <button id="previous" class="tb-btn" type="button" disabled>上一筆</button>
+              <button id="next" class="tb-btn" type="button" disabled>下一筆</button>
+              <span id="match-count" class="tb-small tb-muted" role="status">0 筆</span>
+            </div>
+            <label class="check"><input type="checkbox" id="follow" checked><span>追蹤最新輸出</span></label>
+            <button id="back-live" class="tb-btn" type="button" hidden>回到即時輸出</button>
+          </div>
+          <div id="log-output" class="log-output" tabindex="0" role="region" aria-label="Build log"><div id="live-lines"></div><div id="archive-lines" hidden></div></div>
+          <p id="log-footer" class="tb-small tb-muted">選擇 Job 即可查看輸出。</p>
+        </div>
+        <div class="tb-card stack operation-card" id="ai-panel">
+          <div><h2>AI 分析</h2><p class="tb-muted">提示詞會包含 Workspace、指令、判讀結果及相關 log。</p></div>
+          <div class="row">
+            <label class="tb-field search-field"><span class="tb-field__label">分析方式</span>
+              <select id="ai-method" class="tb-select"><option value="copy">複製提示詞</option><option value="opencode">OpenCode</option><option value="endpoint">自訂端點</option></select>
+            </label>
+            <button id="ai-run" type="button" class="tb-btn tb-btn--primary" disabled>複製提示詞</button>
+            <button id="ai-cancel" type="button" class="tb-btn" hidden>取消分析</button>
+          </div>
+          <p id="ai-status" role="status" class="tb-muted">選擇已結束的 Job。</p>
+          <label id="ai-saved-field" class="tb-field" hidden><span class="tb-field__label">已儲存的分析</span><select id="ai-saved" class="tb-select"></select></label>
+          <label id="ai-output-field" class="tb-field" hidden><span id="ai-output-label" class="tb-field__label">分析結果</span><textarea id="ai-output" class="tb-textarea tb-input--mono" rows="10" readonly></textarea></label>
+        </div>
+      </section>
+
+      <section id="history" hidden>
+        <div class="page-head"><div><p class="kicker">BUILD HISTORY</p><h1>歷史</h1><p>回看建置結果與根本錯誤。</p></div></div>
+        <div class="tb-card stack operation-card">
+          <form id="history-filter" class="operation-grid">
+            <label class="tb-field"><span class="tb-field__label">Workspace</span><select name="workspace" id="history-workspace" class="tb-select"><option value="">全部</option></select></label>
+            <label class="tb-field"><span class="tb-field__label">結果</span><select name="state" class="tb-select"><option value="">全部</option><option value="success">成功</option><option value="failed">失敗</option><option value="stopped">已停止</option></select></label>
+            <label class="tb-field"><span class="tb-field__label">開始日期</span><input name="start" type="date" class="tb-input"></label>
+            <label class="tb-field"><span class="tb-field__label">結束日期</span><input name="end" type="date" class="tb-input"></label>
+            <button type="submit" class="tb-btn">套用篩選</button>
+            <button type="reset" class="tb-btn">清除篩選</button>
+          </form>
+          <div class="row">
+            <label class="check"><input type="checkbox" id="history-all"><span>全選顯示結果</span></label>
+            <span id="history-selected" class="tb-muted">已選 0 筆</span>
+            <button id="history-csv" class="tb-btn" type="button">匯出 CSV</button>
+            <button id="history-json" class="tb-btn" type="button">匯出 JSON</button>
+            <label class="check"><input type="checkbox" id="history-delete-logs"><span>一併刪除 log</span></label>
+            <button id="history-delete" class="tb-btn" type="button" disabled>刪除勾選</button>
+          </div>
+        </div>
+        <div id="history-list" class="stack"></div>
+      </section>
+
+      <section id="recipes" hidden>
+        <div class="page-head"><div><p class="kicker">BUILD CONFIGURATION</p><h1>流程設定</h1><p>編輯 Recipe、參數表與建置產出物規則。</p></div></div>
+        <div class="tb-tabs" role="group" aria-label="流程設定分類">
+          <button class="tb-tab is-active" type="button" data-config="recipe-editor" aria-pressed="true">Recipe</button>
+          <button class="tb-tab" type="button" data-config="parameter-editor" aria-pressed="false">參數表與 preset</button>
+          <button class="tb-tab" type="button" data-config="artifact-editor" aria-pressed="false">產出物</button>
+        </div>
+        <div id="recipe-editor" class="tb-card stack">
+          <div class="editor-fields">
+            <label class="tb-field"><span class="tb-field__label">已儲存的 Recipe</span><select id="edit-recipe" class="tb-select"></select></label>
+            <div class="row editor-actions"><button id="new-recipe" type="button" class="tb-btn">新建 Recipe</button><button id="copy-builtin-recipe" type="button" class="tb-btn tb-btn--primary" hidden>複製為新 Recipe</button><button id="remove-recipe" type="button" class="tb-btn" disabled>刪除 Recipe</button></div>
+          </div>
+          <div id="builtin-recipe-preview" class="stack" hidden></div>
+          <form id="recipe-form" class="stack">
+            <div class="editor-fields">
+              <label class="tb-field"><span class="tb-field__label">Recipe 名稱</span><input id="recipe-name" class="tb-input" placeholder="Clean + Build" required></label>
+              <label class="tb-field"><span class="tb-field__label">逾時（分鐘）</span><input id="recipe-timeout" class="tb-input" type="number" min="1" value="180" required></label>
+              <label class="tb-field"><span class="tb-field__label">參數表</span><select id="recipe-table" class="tb-select"></select></label>
+              <label class="tb-field"><span class="tb-field__label">成功後套用產出物規則</span><select id="recipe-artifacts" class="tb-select"></select></label>
+            </div>
+            <details>
+              <summary>環境變數</summary>
+              <label class="tb-field"><span class="tb-field__label">環境變數（JSON 物件）</span><textarea id="recipe-env" class="tb-textarea tb-input--mono" rows="3">{}</textarea></label>
+            </details>
+            <div class="row"><h2>執行步驟</h2><button id="add-step" class="tb-btn" type="button"><i data-tb-icon="plus"></i>新增步驟</button></div>
+            <div id="recipe-steps" class="stack"></div>
+            <button type="submit" class="tb-btn tb-btn--primary">儲存 Recipe</button>
+          </form>
+        </div>
+        <div id="parameter-editor" class="columns" hidden>
+          <form id="import-parameters" class="tb-card stack">
+            <h2>匯入參數表</h2>
+            <label class="tb-field"><span class="tb-field__label">參數表名稱</span><input id="import-name" class="tb-input" placeholder="sample" required></label>
+            <label class="tb-field"><span class="tb-field__label">Build 指令（選填）</span><input id="import-command" class="tb-input tb-input--mono" placeholder="builda.bat"></label>
+            <label class="tb-field"><span class="tb-field__label">選擇參數檔</span><input id="import-file" type="file" accept=".md,.markdown,.csv,.xlsx,.json" required></label>
+            <p class="tb-field__hint">支援 Markdown、CSV、XLSX、JSON。CSV 或 XLSX 的第一列需包含 flag（或「參數」）欄。</p>
+            <button type="submit" class="tb-btn tb-btn--primary">匯入參數表</button>
+          </form>
+          <div class="tb-card stack">
+            <h2>已儲存的參數表</h2>
+            <label class="tb-field"><span class="tb-field__label">檢視參數表</span><select id="edit-table" class="tb-select"></select></label>
+            <div id="table-details" class="stack"></div>
+            <form id="conflict-form" class="stack" hidden>
+              <label class="tb-field"><span class="tb-field__label">互斥規則</span><textarea id="table-conflicts" class="tb-textarea tb-input--mono" rows="3" placeholder="-r, -d"></textarea><span class="tb-field__hint">每行一組，以逗號分隔旗標或 key。同組同時選取兩項以上時會提示。</span></label>
+              <button type="submit" class="tb-btn">儲存互斥規則</button>
+            </form>
+          </div>
+        </div>
+        <div id="artifact-editor" class="columns" hidden>
+          <form id="artifact-form" class="tb-card stack">
+            <h2>產出物規則</h2>
+            <label class="tb-field"><span class="tb-field__label">已儲存的規則組</span><select id="edit-artifact" class="tb-select"></select></label>
+            <div class="row"><button id="new-artifact" class="tb-btn" type="button">新建規則組</button><button id="remove-artifact" class="tb-btn" type="button" disabled>刪除規則組</button></div>
+            <label class="tb-field"><span class="tb-field__label">規則組名稱</span><input id="artifact-name" class="tb-input" placeholder="sample-output" required></label>
+            <div id="artifact-rules" class="stack"></div>
+            <div class="row"><button id="add-artifact-rule" class="tb-btn" type="button">新增規則</button><button class="tb-btn tb-btn--primary" type="submit">儲存規則組</button></div>
+          </form>
+          <div class="tb-card stack">
+            <h2>預覽與執行</h2>
+            <p class="tb-muted">先儲存並選擇規則組。若範本使用參數或 Job 資訊，可選擇已成功的 Job。</p>
+            <label class="tb-field"><span class="tb-field__label">預覽 Workspace</span><select id="artifact-workspace" class="tb-select"></select></label>
+            <label class="tb-field"><span class="tb-field__label">來源 Job（選填）</span><select id="artifact-job" class="tb-select"></select></label>
+            <div class="row"><button id="preview-artifact" class="tb-btn" type="button">預覽產出物</button><button id="execute-artifact" class="tb-btn tb-btn--primary" type="button" disabled>確認執行</button></div>
+            <div id="artifact-preview" class="stack"></div>
+          </div>
+        </div>
+      </section>
+      <section id="settings" hidden>
+        <div class="page-head"><div><p class="kicker">PREFERENCES</p><h1>設定</h1><p>管理歷史保留、通知、AI 與 Windows 工作排程。</p></div></div>
+        <div class="columns">
+          <div class="stack">
+            <form id="retention-form" class="tb-card stack">
+              <h2>歷史保留</h2><p class="tb-muted">填 0 停用該條件。套用後會清理超出範圍的歷史紀錄。</p>
+              <div class="editor-fields">
+                <label class="tb-field"><span class="tb-field__label">保留天數</span><input id="retention-days" type="number" class="tb-input" min="0" max="100000" required></label>
+                <label class="tb-field"><span class="tb-field__label">保留筆數</span><input id="retention-count" type="number" class="tb-input" min="0" max="100000" required></label>
+              </div>
+              <button type="submit" class="tb-btn">儲存保留規則</button>
+            </form>
+            <form id="notifications-form" class="tb-card stack">
+              <h2>建置通知</h2>
+              <label class="check"><input id="notify-desktop" type="checkbox"><span>瀏覽器通知</span></label>
+              <label class="check"><input id="notify-title" type="checkbox"><span>頁籤標題閃爍</span></label>
+              <label class="check"><input id="notify-sound" type="checkbox"><span>播放提示音</span></label>
+              <button type="submit" class="tb-btn">儲存通知設定</button>
+            </form>
+          </div>
+          <form id="ai-settings-form" class="tb-card stack">
+            <h2>AI 分析設定</h2>
+            <div class="editor-fields">
+              <label class="tb-field"><span class="tb-field__label">預設分析方式</span><select id="ai-default" class="tb-select"><option value="copy">複製提示詞</option><option value="opencode">OpenCode</option><option value="endpoint">自訂端點</option></select></label>
+              <label class="tb-field"><span class="tb-field__label">逾時秒數</span><input id="ai-timeout" type="number" class="tb-input" min="1" max="900" required></label>
+            </div>
+            <label class="tb-field"><span class="tb-field__label">OpenCode 執行檔路徑</span><input id="ai-executable" class="tb-input tb-input--mono" placeholder="C:\tools\opencode.exe"></label>
+            <label class="tb-field"><span class="tb-field__label">OpenCode 參數（JSON 陣列）</span><input id="ai-args" class="tb-input tb-input--mono" placeholder="[]"></label>
+            <div class="editor-fields">
+              <label class="tb-field"><span class="tb-field__label">端點 Base URL</span><input id="ai-base" type="url" class="tb-input" placeholder="http://127.0.0.1:8000"></label>
+              <label class="tb-field"><span class="tb-field__label">模型</span><input id="ai-model" class="tb-input"></label>
+            </div>
+            <label class="tb-field"><span class="tb-field__label">API key</span><input id="ai-key" type="password" autocomplete="new-password" class="tb-input"><span id="ai-key-state" class="tb-field__hint"></span></label>
+            <label class="check"><input id="ai-clear-key" type="checkbox"><span>清除已儲存的 API key</span></label>
+            <label class="tb-field"><span class="tb-field__label">提示詞範本</span><textarea id="ai-template" class="tb-textarea tb-input--mono" rows="5" required></textarea><span class="tb-field__hint">{workspace}、{branch}、{command}、{triage}、{context}</span></label>
+            <button type="submit" class="tb-btn tb-btn--primary">儲存 AI 設定</button>
+          </form>
+        </div>
+        <div class="tb-card stack operation-card">
+          <h2>Windows 工作排程</h2><p class="tb-muted">以這台電腦的本機時間執行，可在 Build Runner 關閉時啟動建置。</p>
+          <form id="schedule-form" class="operation-grid">
+            <label class="tb-field"><span class="tb-field__label">排程名稱</span><input name="name" class="tb-input" maxlength="40" required></label>
+            <label class="tb-field"><span class="tb-field__label">排程 Workspace</span><select id="schedule-workspace" name="workspace" class="tb-select" required></select></label>
+            <label class="tb-field"><span class="tb-field__label">排程 Recipe</span><select id="schedule-recipe" name="recipe" class="tb-select" required></select></label>
+            <label class="tb-field"><span class="tb-field__label">頻率</span><select id="schedule-frequency" name="frequency" class="tb-select"><option value="DAILY">每日</option><option value="WEEKLY">每週</option></select></label>
+            <label id="schedule-day-field" class="tb-field" hidden><span class="tb-field__label">星期</span><select name="day" class="tb-select"><option value="MON">週一</option><option value="TUE">週二</option><option value="WED">週三</option><option value="THU">週四</option><option value="FRI">週五</option><option value="SAT">週六</option><option value="SUN">週日</option></select></label>
+            <label class="tb-field"><span class="tb-field__label">執行時間</span><input name="time" type="time" class="tb-input" required></label>
+            <button type="submit" class="tb-btn tb-btn--primary">新增排程</button>
+          </form>
+          <div id="schedule-list" class="stack"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+  <dialog id="folder-picker" class="tb-dialog folder-picker" aria-labelledby="folder-title">
+    <h2 id="folder-title" class="tb-dialog__title">選擇資料夾</h2>
+    <div class="row">
+      <button type="button" id="folder-roots" class="tb-btn">磁碟清單</button>
+      <button type="button" id="folder-parent" class="tb-btn" disabled>上層</button>
+    </div>
+    <p id="folder-location" class="tb-mono folder-location" role="status"></p>
+    <div id="folder-entries" class="stack folder-entries" aria-label="資料夾清單"></div>
+    <div class="tb-dialog__actions">
+      <button type="button" id="folder-cancel" class="tb-btn" autofocus>取消</button>
+      <button type="button" id="folder-select" class="tb-btn tb-btn--primary" disabled>選取這個資料夾</button>
+    </div>
+  </dialog>
+  <dialog id="page-help" class="tb-dialog page-help" aria-labelledby="page-help-title">
+    <h2 id="page-help-title" class="tb-dialog__title">功能說明</h2>
+    <div id="page-help-content"></div>
+    <div class="tb-dialog__actions"><form method="dialog"><button class="tb-btn tb-btn--primary" autofocus>了解</button></form></div>
+  </dialog>
+  <div class="tb-toast-area" role="status" aria-atomic="true"><div id="toast" class="tb-toast" hidden></div></div>
+</body>
+</html>

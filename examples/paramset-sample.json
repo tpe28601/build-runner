@@ -1,0 +1,12 @@
+{
+  "name": "sample",
+  "command": "builda.bat",
+  "params": [
+    { "key": "release", "flag": "-r", "type": "switch", "group": "Build", "desc": "Release mode" },
+    { "key": "debug", "flag": "-d", "type": "switch", "group": "Build", "desc": "Debug mode" },
+    { "key": "mode", "flag": "-mode", "type": "choice", "group": "Options", "choices": ["A", "B"], "desc": "Sample mode" },
+    { "key": "label", "flag": "-label", "type": "value", "group": "Options", "desc": "Output label", "placeholder": "sample" }
+  ],
+  "conflicts": [["release", "debug"]],
+  "presets": { "release": { "release": true, "mode": "A" } }
+}

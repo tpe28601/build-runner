@@ -1,0 +1,13 @@
+{
+  "name": "sample-output",
+  "rules": [
+    {
+      "select": ["Build/**/*.bin"],
+      "exclude": ["**/temp/**"],
+      "rename": "{name}_{commit7}{ext}",
+      "dest": "Artifacts/{date}",
+      "zip": { "enabled": true, "file": "{workspace}_{date}_{time}.zip" },
+      "when": "success"
+    }
+  ]
+}
