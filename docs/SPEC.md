@@ -73,7 +73,7 @@ Dev-Toolbox 第四個工具：管理多個程式碼資料夾、用可自訂的�
   "name": "Clean + Release",
   "paramset": "sample",
   "steps": [
-    { "name": "cleanall", "argv": ["builda.bat", "cleanall"], "continueOnFail": false },
+    { "name": "cleanall", "argv": ["builda.bat", "-cleanall"], "continueOnFail": false },
     { "name": "build",    "argv": ["builda.bat"], "useParams": true, "preset": "release" }
   ],
   "env": { "KEY": "VALUE" },
@@ -82,7 +82,7 @@ Dev-Toolbox 第四個工具：管理多個程式碼資料夾、用可自訂的�
 }
 ```
 
-- 預設範本：先 `builda.bat cleanall`，再跑 `builda.bat -r`。步驟可新增、刪除、排序、停用。
+- 內建 Recipe 有兩個（唯讀，`@builtin:clean-build`／`@builtin:clean-build-nou`）：「Clean + Build」先 `builda.bat -cleanall` 再跑 `builda.bat -r`；「Clean + Build (-nou)」兩步驟同前但各加 `-nou`。兩者的 Clean 步驟都要求 Workspace 根目錄有 `builda.bat`。使用者 Recipe 的步驟可新增、刪除、排序、停用。
 - 每個步驟在 Workspace 根目錄執行（可另設子資料夾 `cwd`）。
 - `.bat`／`.cmd` 用 `["cmd.exe", "/d", "/c", ...argv]` 執行；其他直接用 argv。不經 shell 字串拼接。
 - 步驟失敗就停（除非 `continueOnFail`）。
@@ -105,12 +105,13 @@ Dev-Toolbox 第四個工具：管理多個程式碼資料夾、用可自訂的�
 - 編碼：依序試 UTF-8 → UTF-16（有 BOM 時）→ cp950，無法解碼的字元用替代字元。
 - 快速搜尋按鈕：`error`、`fail`、`warning`，加上自訂關鍵字；顯示筆數，可上一筆／下一筆跳轉，命中處高亮。
 - 自動判讀（沿用 build-log-triage 的規則）：判斷 `- Done -`／`- Failed -`、找第一個根本錯誤（compile／link 優先）、把 `NMAKE U1077`、`error 7000` 歸為連鎖錯誤。結果顯示在 log 上方，點一下跳到該行。
-- 「AI 分析」：把判讀結果＋錯誤前後 40 行（加上 Workspace、branch、指令）組成提示詞，提示詞範本可在設定裡修改。三種送法，設定裡選預設、按鈕旁的下拉可臨時切換：
+- 「AI 分析」：把判讀結果＋選定的 log 範圍（加上 Workspace、branch、指令）組成提示詞，提示詞範本可在設定裡修改。log 範圍下拉：錯誤附近 ±40 行（預設）／尾端 200 行／完整 log（取檔尾，超過時開頭加省略提示）／自訂起訖行號（上限 20000 行）。「預覽提示詞」以 `POST /api/jobs/<id>/ai` 帶 `preview: true` 取回提示詞內容但不送出分析。三種送法，設定裡選預設、按鈕旁的下拉可臨時切換：
   1. **OpenCode**：在該 Workspace 資料夾執行 `opencode run <提示詞>`（opencode 執行檔路徑、要帶的 `--model`／`--agent` 等參數可在設定填），輸出顯示在面板。長提示詞先寫到暫存檔，避免超過命令列長度。
   2. **自訂端點**：OpenAI 相容 API（例如 LiteLLM），設定 base URL、model、API key（key 存在使用者資料夾，畫面上遮罩顯示），用 `/v1/chat/completions` 送出並顯示回答。
   3. **複製提示詞**：只複製到剪貼簿，讓使用者自己貼到任何 AI。
   - 送出都是背景工作，可取消；回答存到 `jobs\<jobId>\ai-<時間>.md`，歷史頁可以再打開。
 - 大 log：前端只保留最後 N 行（預設 5000）；開啟 Job 首屏改讀檔尾（`?tail=`），不再整份重播；搜尋在後端做，結果依檔案大小與修改時間快取。
+- 下載：log 頁「下載 .log」走 `GET /api/jobs/<id>/log?download=1`，回應 `Content-Disposition: attachment`，檔名 `<workspace>-<branch>-<job前8碼>.log`，非 `[A-Za-z0-9._-]` 字元取代為 `-`。
 
 ### 3.6 產出物（Artifact 規則）
 
@@ -205,9 +206,9 @@ exit code 照 TOOL-SPEC（0 成功、1 失敗、3 參數錯、4 取消、5 環�
 | `POST /api/jobs/check` | 建立前檢查衝突，回傳警告清單 |
 | `POST /api/jobs` | 建立 Job（可多個 Workspace） |
 | `GET /api/jobs`、`GET /api/jobs/<id>` | 列表／狀態 |
-| `GET /api/jobs/<id>/log?from=<offset>` | 增量 log |
+| `GET /api/jobs/<id>/log?from=<offset>` | 增量 log；`?download=1` 下載 `.log` 檔 |
 | `GET /api/jobs/<id>/search?q=&kind=error|fail|warning` | 搜尋 |
-| `GET /api/jobs/<id>/triage`、`POST /api/jobs/<id>/ai` | 判讀／AI 分析 |
+| `GET /api/jobs/<id>/triage`、`POST /api/jobs/<id>/ai` | 判讀／AI 分析（ai POST 可帶 `logScope`/`logStart`/`logEnd`，`preview: true` 只回提示詞） |
 | `POST /api/jobs/<id>/stop` | 停止 |
 | `GET /api/history`、`POST /api/history/export`、`POST /api/history/delete` | 歷史（delete 要 `confirm: true`） |
 | `GET/POST/DELETE /api/schedules` | 排程 |

@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.3.0] - 2026-11-11
+
+### 新增
+
+- AI 分析可選 log 範圍：提示詞的 log context 支援「錯誤附近 ±40 行（預設）／尾端 200 行／完整 log（自動截尾）／自訂起訖行號（上限 20000 行）」；新增「預覽提示詞」按鈕，送出前可先檢查實際代入的內容與字元數。
+- log 下載：log 頁新增「下載 .log」連結，`GET /api/jobs/<id>/log?download=1` 以 `Content-Disposition: attachment` 送出，檔名為 `<workspace>-<branch>-<job前8碼>.log`（非 ASCII 字元自動取代）。
+- 第二個內建 Recipe「Clean + Build (-nou)」：Clean 為 `builda.bat -cleanall -nou`、Build 為 `builda.bat -r -nou`，與原內建一樣唯讀，可用「複製成自己的 Recipe」編輯。
+
+### 變更
+
+- 內建 Recipe「Clean + Build」的 Clean 步驟改為 `builda.bat -cleanall`（原 `builda.bat cleanall`，與 builda.bat 旗標一致）。
+
+### 修正
+
+- 歷史頁「根本錯誤」欄：建置成功的紀錄不再顯示 triage 誤判的雜訊文字（改顯示「—」）；長錯誤文字以 2 行截斷，完整內容移到 title 提示，表格行高不再被撐爆。
+
 ## [0.2.0] - 2026-11-11
 
 ### 變更

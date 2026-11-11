@@ -134,6 +134,7 @@
             </div>
             <label class="check"><input type="checkbox" id="follow" checked><span>追蹤最新輸出</span></label>
             <button id="back-live" class="tb-btn" type="button" hidden>回到即時輸出</button>
+            <a id="log-download" class="tb-btn" href="#" hidden>下載 .log</a>
           </div>
           <div id="log-output" class="log-output" tabindex="0" role="region" aria-label="Build log"><div id="live-lines"></div><div id="archive-lines" hidden></div></div>
           <p id="log-footer" class="tb-small tb-muted">選擇 Job 即可查看輸出。</p>
@@ -144,9 +145,21 @@
             <label class="tb-field search-field"><span class="tb-field__label">分析方式</span>
               <select id="ai-method" class="tb-select"><option value="copy">複製提示詞</option><option value="opencode">OpenCode</option><option value="endpoint">自訂端點</option></select>
             </label>
+            <label class="tb-field search-field"><span class="tb-field__label">Log 範圍</span>
+              <select id="ai-scope" class="tb-select">
+                <option value="around" selected>錯誤附近（±40 行）</option>
+                <option value="tail">尾端 200 行</option>
+                <option value="full">完整 log（自動截尾）</option>
+                <option value="range">自訂起訖行號</option>
+              </select>
+            </label>
+            <label class="tb-field ai-range-field" id="ai-start-field" hidden><span class="tb-field__label">起始行</span><input id="ai-log-start" class="tb-input" type="number" min="1" step="1" value="1"></label>
+            <label class="tb-field ai-range-field" id="ai-end-field" hidden><span class="tb-field__label">結束行</span><input id="ai-log-end" class="tb-input" type="number" min="1" step="1" value="1"></label>
             <button id="ai-run" type="button" class="tb-btn tb-btn--primary" disabled>複製提示詞</button>
+            <button id="ai-preview" type="button" class="tb-btn" disabled>預覽提示詞</button>
             <button id="ai-cancel" type="button" class="tb-btn" hidden>取消分析</button>
           </div>
+          <label id="ai-preview-field" class="tb-field" hidden><span class="tb-field__label">提示詞預覽<span id="ai-preview-meta" class="tb-small tb-muted"></span></span><textarea id="ai-preview-text" class="tb-textarea tb-input--mono" rows="8" readonly></textarea></label>
           <p id="ai-status" role="status" class="tb-muted">選擇已結束的 Job。</p>
           <label id="ai-saved-field" class="tb-field" hidden><span class="tb-field__label">已儲存的分析</span><select id="ai-saved" class="tb-select"></select></label>
           <label id="ai-output-field" class="tb-field" hidden><span id="ai-output-label" class="tb-field__label">分析結果</span><textarea id="ai-output" class="tb-textarea tb-input--mono" rows="10" readonly></textarea></label>

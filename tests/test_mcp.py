@@ -78,7 +78,7 @@ class MCPTests(unittest.TestCase):
         recipe = self.tool("list_recipes")[0]
         self.assertTrue(recipe["builtIn"])
         self.assertEqual(recipe["name"], "Clean + Build")
-        self.assertEqual(recipe["steps"][0]["argv"], ["builda.bat", "cleanall"])
+        self.assertEqual(recipe["steps"][0]["argv"], ["builda.bat", "-cleanall"])
         self.assertEqual(recipe["steps"][1]["argv"], ["builda.bat", "-r"])
         self.tool("start_build", is_error=True, workspace="sample", recipe=recipe["id"], argv=["other.bat"])
         self.tool("start_build", is_error=True, workspace="sample", recipe=recipe["id"], params={"unknown": True})
@@ -115,7 +115,7 @@ class MCPTests(unittest.TestCase):
     def test_builtin_recipe_runs_clean_then_build_without_saving_a_copy(self):
         self.initialize()
         (self.workspace / "builda.bat").write_text(
-            '@echo off\nif "%~1"=="cleanall" (\n  echo Clean step\n  exit /b 0\n)\n'
+            '@echo off\nif "%~1"=="-cleanall" (\n  echo Clean step\n  exit /b 0\n)\n'
             "echo Build step %*\nexit /b 0\n", encoding="utf-8",
         )
         recipe = self.tool("list_recipes")[0]

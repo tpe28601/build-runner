@@ -500,7 +500,9 @@ async function loadHistory() {
     record.insertCell().append(element("div", "", timeLabel(row.endedAt)), element("div", "tb-small tb-muted", duration(row.durationSec)));
     const root = record.insertCell();
     root.className = "history-root";
-    root.textContent = row.rootError?.text || "—";
+    const rootText = row.state === "success" ? "—" : row.rootError?.text || "—";
+    root.textContent = rootText;
+    if (rootText !== "—") root.title = rootText;
     const actions = element("div", "row");
     actions.append(button("查看 Log", () => openLog(row.id)), button("AI 分析", () => openSavedAnalysis(row.id)));
     record.insertCell().append(actions);
@@ -522,6 +524,9 @@ function chooseLog(id) {
   $("triage").hidden = true;
   $("log-state").replaceWith(Object.assign(badge(), { id: "log-state", textContent: "尚未選擇 Job" }));
   $("log-job").value = id;
+  const download = $("log-download");
+  download.href = id ? "/api/jobs/" + encodeURIComponent(id) + "/log?download=1" : "#";
+  download.hidden = !id;
   $("log-footer").textContent = id ? "等待輸出…" : "選擇 Job 即可查看輸出。";
   renderSearch(log, { total: 0, counts: {}, matches: [] });
   showLive();

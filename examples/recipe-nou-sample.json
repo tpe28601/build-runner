@@ -1,0 +1,9 @@
+{
+  "name": "Clean + Build (-nou)",
+  "steps": [
+    { "name": "Clean", "argv": ["builda.bat", "-cleanall", "-nou"], "continueOnFail": false },
+    { "name": "Build", "argv": ["builda.bat", "-r", "-nou"], "useParams": true }
+  ],
+  "env": {},
+  "timeoutMin": 180
+}

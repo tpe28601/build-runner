@@ -12,7 +12,7 @@
 ## 第一次建置
 
 1. 在 **Workspace** 新增資料夾，或選取 Git repo 後匯入 worktree。
-2. 在 **流程設定 → Recipe** 查看內建 **Clean + Build**。執行時會先跑 `builda.bat cleanall`，再跑 `builda.bat -r`。請確認 Workspace 根目錄有該批次檔，且你要先清理再建置。要使用不同的指令，按 **複製為新 Recipe** 後修改。
+2. 在 **流程設定 → Recipe** 查看內建 **Clean + Build**（`builda.bat -cleanall` → `builda.bat -r`）與 **Clean + Build (-nou)**（兩步驟各加 `-nou`）。請確認 Workspace 根目錄有該批次檔，且你要先清理再建置。要使用不同的指令，按 **複製為新 Recipe** 後修改。
 3. 在 **Build** 選取 Workspace 和 Recipe。檢查指令與資料夾衝突後開始建置。
 4. 在 **Log** 查看即時輸出、搜尋警告或錯誤，或從 **歷史** 回看結果。每個分頁都有 **功能說明**。
 

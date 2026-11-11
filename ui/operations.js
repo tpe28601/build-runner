@@ -17,9 +17,9 @@ const pageHelp = {
     "開始前可先檢查衝突。同資料夾已有工作時，需明確勾選允許後才能執行。",
   ]],
   log: ["Log", [
-    "選取 Job 後會自動讀取新增輸出。關閉「追蹤最新輸出」可停在目前位置。",
+    "選取 Job 後會自動讀取新增輸出。關閉「追蹤最新輸出」可停在目前位置。要存檔時按「下載 .log」。",
     "搜尋關鍵字或選擇 error、fail、warning。使用上一筆／下一筆，或點判讀摘要跳到該行。",
-    "Job 結束後可複製 AI 提示詞，或送到已設定的 OpenCode／自訂端點。送出的內容包含相關 log。",
+    "Job 結束後可複製 AI 提示詞，或送到已設定的 OpenCode／自訂端點。可选择提示詞帶入的 log 範圍（錯誤附近、尾端、完整或自訂起訖行），「預覽提示詞」可先檢查內容。",
   ]],
   history: ["歷史", [
     "可依 Workspace、結果及完成日期篩選紀錄。",
@@ -27,7 +27,7 @@ const pageHelp = {
     "刪除前會要求確認，會連同該 Job 的 log 一併移除（執行中的 Job 不能刪）。已儲存的分析回答也會一併刪除。",
   ]],
   recipes: ["流程設定", [
-    "可查看內建的 Clean + Build，或複製成自己的 Recipe，再編排步驟及連結參數表與產出物規則。",
+    "可查看內建的 Clean + Build 與 Clean + Build (-nou)，或複製成自己的 Recipe，再編排步驟及連結參數表與產出物規則。",
     "在參數表匯入檔案並編輯互斥規則。Preset 可從 Build 頁另存。",
     "在產出物設定選取、排除、命名和 ZIP。手動執行前先預覽並確認。",
   ]],
@@ -308,9 +308,26 @@ function updateAnalysisActions() {
   const task = analysesByJob.get(log.id);
   const running = task?.state === "running";
   $("ai-run").disabled = !job || activeStates.has(job.state) || running;
+  $("ai-preview").disabled = !job || activeStates.has(job.state) || running;
   $("ai-cancel").hidden = !running;
   $("ai-method").disabled = !!running;
+  $("ai-scope").disabled = !!running;
   $("ai-run").textContent = $("ai-method").value === "copy" ? "複製提示詞" : "送出分析";
+}
+
+function logScopePayload() {
+  const scope = $("ai-scope").value;
+  const payload = { logScope: scope };
+  if (scope === "range") {
+    const start = Number.parseInt($("ai-log-start").value, 10);
+    const end = Number.parseInt($("ai-log-end").value, 10);
+    if (!Number.isInteger(start) || !Number.isInteger(end) || start < 1 || end < start) {
+      throw Object.assign(new Error("請輸入有效的起訖行號（起始行 ≥ 1 且不大於結束行）。"), { code: "INVALID_LOG_RANGE" });
+    }
+    payload.logStart = start;
+    payload.logEnd = end;
+  }
+  return payload;
 }
 
 function showAnalysis(text, label = "分析結果") {
@@ -344,6 +361,8 @@ function chooseAnalysisJob(id) {
   $("ai-status").textContent = id ? "選擇分析方式。Job 結束後即可使用。" : "選擇已結束的 Job。";
   $("ai-output-field").hidden = $("ai-saved-field").hidden = true;
   $("ai-output").value = "";
+  $("ai-preview-field").hidden = true;
+  $("ai-preview-text").value = "";
   $("ai-saved").replaceChildren();
   const task = analysesByJob.get(id);
   if (task) renderAnalysisTask(task);
@@ -412,7 +431,7 @@ listen($("ai-run"), "click", async () => {
   const id = log.id;
   const method = $("ai-method").value;
   if (method !== "copy" && !window.confirm("將此 Job 的提示詞和相關 log 送往" + (method === "opencode" ? " OpenCode" : "自訂端點") + "？")) return;
-  const { result } = await api("/jobs/" + id + "/ai", "POST", { method });
+  const { result } = await api("/jobs/" + id + "/ai", "POST", { method, ...logScopePayload() });
   if (method === "copy") {
     if (log.id !== id) return;
     try {
@@ -427,6 +446,21 @@ listen($("ai-run"), "click", async () => {
     return;
   }
   await monitorAnalysis(result);
+});
+
+listen($("ai-scope"), "change", () => {
+  const range = $("ai-scope").value === "range";
+  $("ai-start-field").hidden = !range;
+  $("ai-end-field").hidden = !range;
+});
+
+listen($("ai-preview"), "click", async () => {
+  const id = log.id;
+  const { result } = await api("/jobs/" + id + "/ai", "POST", { method: "copy", preview: true, ...logScopePayload() });
+  if (log.id !== id) return;
+  $("ai-preview-text").value = result.prompt;
+  $("ai-preview-meta").textContent = "（" + result.prompt.length.toLocaleString() + " 字元）";
+  $("ai-preview-field").hidden = false;
 });
 
 listen($("ai-cancel"), "click", async () => {

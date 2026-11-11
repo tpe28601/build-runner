@@ -112,6 +112,38 @@ class Phase4Tests(unittest.TestCase):
             for expected in ("PlatformA", "sample", "builda.bat", "Before", "C2065"):
                 self.assertIn(expected, prompt)
 
+    def test_prompt_log_scopes(self):
+        with tempfile.TemporaryDirectory() as temp:
+            log = Path(temp) / "build.log"
+            log.write_text("".join(f"line {number}\n" for number in range(1, 1001))
+                           + "line 1001 sample.c(9): error C2065: unknown\n", encoding="utf-8")
+            row = {"workspace": "PlatformA", "branch": "sample", "argv": []}
+            around = ai.prompt_for(row, log)
+            self.assertIn("1001: line 1001", around)
+            self.assertIn("961: line 961", around)
+            self.assertNotIn("960: line 960", around)
+            tail = ai.prompt_for(row, log, scope="tail")
+            self.assertIn("802: line 802", tail)
+            self.assertNotIn("801: line 801", tail)
+            window = ai.prompt_for(row, log, scope="range", start=10, end=12)
+            self.assertIn("12: line 12", window)
+            self.assertNotIn("13: line 13", window)
+            swapped = ai.prompt_for(row, log, scope="range", start=12, end=10)
+            self.assertIn("10: line 10", swapped)
+            self.assertIn("12: line 12", swapped)
+            self.assertNotIn("13: line 13", swapped)
+            with self.assertRaises(ToolError) as caught:
+                ai.prompt_for(row, log, scope="range", start=1, end=20_001)
+            self.assertEqual(caught.exception.code, "INVALID_LOG_RANGE")
+            full = ai.prompt_for(row, log, scope="full")
+            self.assertIn("1: line 1", full)
+            self.assertNotIn("omitted", full)
+            big = Path(temp) / "big.log"
+            big.write_text("".join(f"line {number}\n" for number in range(1, 251)), encoding="utf-8")
+            tail = ai.prompt_for(row, big, scope="tail")
+            self.assertIn("51: line 51", tail)
+            self.assertNotIn("50: line 50", tail)
+
     def test_schedule_options_are_validated_and_scoped(self):
         options = schedule.normalize({"name": "sample", "workspace": "PlatformA", "recipe": "Test",
                                       "frequency": "WEEKLY", "time": "06:30", "day": "MON"})

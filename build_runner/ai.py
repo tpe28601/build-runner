@@ -79,13 +79,31 @@ def endpoint_url(base):
     return parsed._replace(path=path + ("" if path.endswith("/v1") else "/v1") + "/chat/completions").geturl()
 
 
-def prompt_for(row, log, template=DEFAULT_TEMPLATE):
+def prompt_for(row, log, template=DEFAULT_TEMPLATE, scope="around", start=1, end=1):
     report = logtools.triage(log)
     root = report["rootError"]
-    center = root["line"] if root else max(1, report["lineCount"] - 40)
-    first = max(1, center - 40)
-    context = "\n".join(f"{number}: {line[:1500]}" for number, line in
-                        enumerate(islice(logtools.iter_lines(log), first - 1, center + 40), first))
+    omitted = 0
+    if scope == "tail":
+        window = logtools.tail(log, 200)
+        first, lines = window["startLine"], window["text"].splitlines()
+    elif scope == "full":
+        window = logtools.tail(log, 500_000)
+        first, lines = window["startLine"], window["text"].splitlines()
+        omitted = first - 1
+    elif scope == "range":
+        first, last = max(1, int(start)), max(1, int(end))
+        if first > last:
+            first, last = last, first
+        if last - first + 1 > 20_000:
+            raise ToolError("INVALID_LOG_RANGE", "Selected log range exceeds 20,000 lines.")
+        lines = list(islice(logtools.iter_lines(log), first - 1, last))
+    else:
+        center = root["line"] if root else max(1, report["lineCount"] - 40)
+        first = max(1, center - 40)
+        lines = list(islice(logtools.iter_lines(log), first - 1, center + 40))
+    context = "\n".join(f"{number}: {line[:1500]}" for number, line in enumerate(lines, first))
+    if omitted:
+        context = f"[... first {omitted} lines omitted ...]\n{context}"
     triage = {"result": report["result"], "rootError": root, "cascadeErrors": report["cascadeErrors"][:8]}
     values = {"workspace": str(row.get("workspace") or ""), "branch": str(row.get("branch") or ""),
               "command": json.dumps(row.get("argv") or row.get("argvPreview") or [], ensure_ascii=False),

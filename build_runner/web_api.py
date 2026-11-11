@@ -2,6 +2,7 @@
 
 import base64
 import binascii
+from dataclasses import dataclass
 from itertools import islice
 import os
 import re
@@ -19,6 +20,12 @@ class HttpError(Exception):
         super().__init__(message)
         self.status = status
         self.response = {"ok": False, "error": {"code": code, "message": message, "detail": detail or {}}}
+
+
+@dataclass
+class Download:
+    data: bytes
+    filename: str
 
 
 def ok(result, status=200, **extra):
@@ -398,7 +405,7 @@ class Api:
     def recipe_route(self, method, body):
         if method == "GET":
             return ok(recipes.list_recipes(self.data))
-        if body.get("id") == recipes.BUILTIN_ID or body.get("name") == recipes.BUILTIN_ID:
+        if body.get("id") in recipes.BUILTIN_IDS or body.get("name") in recipes.BUILTIN_IDS:
             raise HttpError(400, "BUILTIN_RECIPE_READ_ONLY", "內建 Recipe 請先複製再編輯。")
 
         def normalize(record):
@@ -541,6 +548,13 @@ class Api:
             if action is None:
                 return ok(row)
             if action == "log":
+                if "download" in query:
+                    if not path.is_file():
+                        raise HttpError(404, "LOG_NOT_FOUND", "Log file not found.")
+                    label = re.sub(r"[^A-Za-z0-9._-]+", "-",
+                                   f"{row.get('workspace') or ''}-{row.get('branch') or ''}-{job_id[:8]}")
+                    label = label.strip("-.") or job_id
+                    return 200, Download(path.read_bytes(), f"{label}.log")
                 if "line" in query:
                     line = integer(query, "line", 1, minimum=1)
                     start = max(1, line - 10)
@@ -589,7 +603,21 @@ class Api:
                 selected = body.get("method", config["method"])
                 if selected not in ai.METHODS:
                     raise HttpError(400, "INVALID_AI_METHOD", "請選擇有效的 AI 分析方式。")
-                prompt = ai.prompt_for(row, path, config["template"])
+                scope = body.get("logScope", "around")
+                if scope not in ("around", "tail", "full", "range"):
+                    raise HttpError(400, "INVALID_LOG_SCOPE", "log 範圍必須是 around、tail、full 或 range。")
+                bounds = []
+                for field in ("logStart", "logEnd"):
+                    value = body.get(field, 1)
+                    if type(value) is not int or value < 1:
+                        raise HttpError(400, "INVALID_LOG_RANGE", f"{field} 必須是正整數。")
+                    bounds.append(value)
+                try:
+                    prompt = ai.prompt_for(row, path, config["template"], scope, *bounds)
+                except ToolError as exc:
+                    raise HttpError(400, exc.code, str(exc)) from exc
+                if body.get("preview") is True:
+                    return ok({"prompt": prompt, "scope": scope})
                 if selected == "copy":
                     return ok({"prompt": prompt})
                 return ok(self.analyses.start(selected, config, row, folder, prompt), 202)

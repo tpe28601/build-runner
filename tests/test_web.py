@@ -131,11 +131,46 @@ class WebTests(unittest.TestCase):
         self.api("POST", "/api/settings", {"ai": {"clearApiKey": True}})
 
     def test_builtin_recipe_is_visible_and_read_only(self):
-        built_in = self.api("GET", "/api/recipes")["result"][0]
-        self.assertTrue(built_in["builtIn"])
-        self.assertEqual(built_in["name"], "Clean + Build")
-        self.api("POST", "/api/recipes", {**built_in, "confirm": True}, code=400)
-        self.api("DELETE", "/api/recipes", {"name": built_in["id"], "confirm": True}, code=400)
+        builtins = self.api("GET", "/api/recipes")["result"][:2]
+        self.assertEqual([record["name"] for record in builtins], ["Clean + Build", "Clean + Build (-nou)"])
+        self.assertTrue(all(record["builtIn"] for record in builtins))
+        self.assertEqual(builtins[0]["steps"][0]["argv"], ["builda.bat", "-cleanall"])
+        self.assertEqual(builtins[1]["steps"][0]["argv"], ["builda.bat", "-cleanall", "-nou"])
+        self.assertEqual(builtins[1]["steps"][1]["argv"], ["builda.bat", "-r", "-nou"])
+        for record in builtins:
+            self.api("POST", "/api/recipes", {**record, "confirm": True}, code=400)
+            self.api("DELETE", "/api/recipes", {"name": record["id"], "confirm": True}, code=400)
+
+    def test_log_download_and_ai_prompt_scope(self):
+        job_id = "b" * 32
+        folder = self.data / "jobs" / job_id
+        folder.mkdir(parents=True)
+        (folder / "status.json").write_text(json.dumps(
+            {"id": job_id, "workspace": "PlatformA", "branch": "feature/x", "state": "failed",
+             "argv": ["builda.bat", "-r"], "queuedAt": "2026-11-01T00:00:00+00:00",
+             "startedAt": "2026-11-01T00:00:01+00:00", "endedAt": "2026-11-01T00:10:00+00:00",
+             "exitCode": 1}), encoding="utf-8")
+        body = "".join(f"line {number}\n" for number in range(1, 11))
+        body += "line 11 sample.c(9): error C2065: unknown\n"
+        (folder / "build.log").write_bytes(body.encode("utf-8"))
+        status, content, headers = self.request("GET", f"/api/jobs/{job_id}/log?download=1")
+        self.assertEqual(status, 200)
+        self.assertEqual(content, body.encode("utf-8"))
+        self.assertEqual(headers["Content-Type"], "application/octet-stream")
+        self.assertEqual(headers["Content-Disposition"],
+                         f'attachment; filename="PlatformA-feature-x-{job_id[:8]}.log"')
+        prompt = self.api("POST", f"/api/jobs/{job_id}/ai",
+                          {"method": "copy", "preview": True, "logScope": "range",
+                           "logStart": 2, "logEnd": 4})["result"]["prompt"]
+        self.assertIn("2: line 2", prompt)
+        self.assertIn("4: line 4", prompt)
+        self.assertNotIn("5: line 5", prompt)
+        self.assertEqual(self.api("POST", f"/api/jobs/{job_id}/ai",
+                                  {"method": "copy", "preview": True})["result"]["scope"], "around")
+        self.api("POST", f"/api/jobs/{job_id}/ai", {"method": "copy", "preview": True,
+                                                    "logScope": "everywhere"}, code=400)
+        self.api("POST", f"/api/jobs/{job_id}/ai", {"method": "copy", "preview": True,
+                                                    "logScope": "range", "logStart": "2"}, code=400)
 
     def test_write_guards_and_json_errors(self):
         headers = {"Content-Type": "application/json"}

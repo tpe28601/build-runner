@@ -8,19 +8,27 @@ from . import paramsets
 from .paths import ROOT, ToolError, config_records, named_file, read_json
 
 BUILTIN_ID = "@builtin:clean-build"
+BUILTIN_NOU_ID = "@builtin:clean-build-nou"
+BUILTIN_RECIPES = ((BUILTIN_ID, "recipe-sample.json"), (BUILTIN_NOU_ID, "recipe-nou-sample.json"))
+BUILTIN_IDS = {builtin_id for builtin_id, _ in BUILTIN_RECIPES}
 
 
-def builtin_recipe():
-    return {**read_json(ROOT / "examples" / "recipe-sample.json"), "id": BUILTIN_ID, "builtIn": True}
+def builtin_recipe(record_id=BUILTIN_ID):
+    sample = dict(BUILTIN_RECIPES)[record_id]
+    return {**read_json(ROOT / "examples" / sample), "id": record_id, "builtIn": True}
+
+
+def builtin_recipes():
+    return [builtin_recipe(builtin_id) for builtin_id, _ in BUILTIN_RECIPES]
 
 
 def list_recipes(data):
-    return [builtin_recipe(), *({**row, "builtIn": False} for row in config_records(data, "recipes"))]
+    return [*builtin_recipes(), *({**row, "builtIn": False} for row in config_records(data, "recipes"))]
 
 
 def get_recipe(data, name):
-    if name == BUILTIN_ID:
-        return builtin_recipe()
+    if name in BUILTIN_IDS:
+        return builtin_recipe(name)
     path = named_file(data, "recipes", name)
     recipe = read_json(path)
     if recipe is None:
@@ -30,9 +38,9 @@ def get_recipe(data, name):
                 recipe = record
                 break
     if recipe is None:
-        builtin = builtin_recipe()
-        if builtin["name"].casefold() == name.casefold():
-            return builtin
+        for builtin in builtin_recipes():
+            if builtin["name"].casefold() == name.casefold():
+                return builtin
         raise ToolError("RECIPE_NOT_FOUND", f"Recipe not found: {name}")
     if not isinstance(recipe, dict) or not isinstance(recipe.get("steps"), list):
         raise ToolError("INVALID_RECIPE", "Recipe must contain a list of steps.")
@@ -76,7 +84,7 @@ def prepare(workspace, recipe, preset=None, *, table=None, overrides=None):
         cwd = (root / cwd).resolve()
         if not cwd.is_relative_to(root) or not cwd.is_dir():
             raise ToolError("INVALID_RECIPE", f"Step {index} cwd must be an existing folder inside the workspace.")
-        if recipe.get("id") == BUILTIN_ID:
+        if recipe.get("id") in BUILTIN_IDS:
             script = cwd / argv[0]
             if not script.is_file():
                 raise ToolError("BUILTIN_SCRIPT_NOT_FOUND", "Clean + Build requires builda.bat in the Workspace root.")

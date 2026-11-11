@@ -1,7 +1,7 @@
 {
   "name": "Clean + Build",
   "steps": [
-    { "name": "Clean", "argv": ["builda.bat", "cleanall"], "continueOnFail": false },
+    { "name": "Clean", "argv": ["builda.bat", "-cleanall"], "continueOnFail": false },
     { "name": "Build", "argv": ["builda.bat", "-r"], "useParams": true }
   ],
   "env": {},

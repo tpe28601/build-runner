@@ -282,9 +282,9 @@ function editStep(step) {
   return { ...step, argvText: JSON.stringify(step.argv || []), enabled: step.enabled !== false };
 }
 
-function defaultRecipe(name = "") {
-  const builtin = configuration.recipes.find((recipe) => recipe.builtIn);
-  return { name, timeoutMin: builtin?.timeoutMin ?? 180, env: {}, steps: builtin?.steps || [] };
+function defaultRecipe(name = "", source = null) {
+  const basis = source || configuration.recipes.find((recipe) => recipe.builtIn);
+  return { name, timeoutMin: basis?.timeoutMin ?? 180, env: {}, steps: basis?.steps || [] };
 }
 
 function setRecipeDraft(record) {
@@ -368,17 +368,22 @@ listen($("new-recipe"), "click", () => {
 });
 listen($("copy-builtin-recipe"), "click", () => {
   $("edit-recipe").value = "";
-  setRecipeDraft(defaultRecipe(recipeDraft.name + " 複本"));
+  setRecipeDraft(defaultRecipe(recipeDraft.name + " 複本", recipeDraft));
   $("recipe-name").focus();
 });
 $("recipe-table").addEventListener("change", () => {
   const table = recordById(configuration.tables, $("recipe-table").value);
   if (recipeTemplateCommand) {
     const command = table?.command || "builda.bat";
+    const stock = [[], ["-cleanall"], ["-cleanall", "-nou"], ["-r"], ["-r", "-nou"]];
     for (const step of recipeDraft.steps) {
       // Keep custom argv intact. Only replace the executable in the stock template.
-      if (step.argvText === JSON.stringify([recipeTemplateCommand, "cleanall"])) step.argvText = JSON.stringify([command, "cleanall"]);
-      if (step.argvText === JSON.stringify([recipeTemplateCommand, "-r"])) step.argvText = JSON.stringify([command, "-r"]);
+      for (const suffix of stock) {
+        if (step.argvText === JSON.stringify([recipeTemplateCommand, ...suffix])) {
+          step.argvText = JSON.stringify([command, ...suffix]);
+          break;
+        }
+      }
     }
     recipeTemplateCommand = command;
   }

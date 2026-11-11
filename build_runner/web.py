@@ -20,7 +20,7 @@ if not __package__:
 
 from build_runner import jobs
 from build_runner.paths import ROOT, ToolError, data_dir, read_json
-from build_runner.web_api import Api, HttpError
+from build_runner.web_api import Api, Download, HttpError
 
 MAX_BODY = 1024 * 1024
 STATIC_FILES = {
@@ -91,6 +91,17 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(content)))
+        if self.close_connection:
+            self.send_header("Connection", "close")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(content)
+
+    def send_download(self, status, content, filename):
+        self.send_response(status)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(len(content)))
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
         if self.close_connection:
             self.send_header("Connection", "close")
         self.end_headers()
@@ -202,6 +213,9 @@ class Handler(BaseHTTPRequestHandler):
                 return
             query = parse_qs(raw_query, keep_blank_values=True)
             status, result = self.server.api.route(method, path, query, body)
+            if isinstance(result, Download):
+                self.send_download(status, result.data, result.filename)
+                return
             self.send_json(status, result)
         except HttpError as exc:
             # Keep a synchronized HTTP/1.1 connection open. In particular,
