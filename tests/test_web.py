@@ -102,7 +102,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual(listing["selection"], child.name)
         self.api("POST", "/api/browse", {**scope, "path": str(root.parent)}, code=400)
 
-    def test_history_delete_requires_confirmation_and_can_remove_log(self):
+    def test_history_delete_requires_confirmation_and_removes_job_folder(self):
         job_id = "a" * 32
         folder = self.data / "jobs" / job_id
         folder.mkdir(parents=True)
@@ -116,13 +116,11 @@ class WebTests(unittest.TestCase):
         self.assertEqual([item["id"] for item in filtered], [job_id])
         result = self.api("POST", "/api/history/export", {"format": "json", "ids": [job_id]})["result"]
         self.assertEqual(json.loads(result["content"]), filtered)
-        self.api("POST", "/api/history/delete", {"ids": [job_id], "deleteLogs": True}, code=400)
+        self.api("POST", "/api/history/delete", {"ids": [job_id]}, code=400)
         self.assertTrue(log.exists())
-        result = self.api("POST", "/api/history/delete", {
-            "ids": [job_id], "deleteLogs": True, "confirm": True,
-        })["result"]
-        self.assertEqual(result, {"deleted": 1, "deletedLogs": 1})
-        self.assertFalse(log.exists())
+        result = self.api("POST", "/api/history/delete", {"ids": [job_id], "confirm": True})["result"]
+        self.assertEqual(result, {"deleted": 1, "deletedJobs": 1})
+        self.assertFalse(folder.exists())
 
     def test_ai_settings_key_is_omitted_from_all_settings_responses(self):
         key = "sample-private-key"

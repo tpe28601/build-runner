@@ -288,6 +288,11 @@ def main(argv=None):
         for file, _ in set(STATIC_FILES.values()):
             if not (ROOT / "ui" / file).is_file():
                 raise ToolError("ASSET_MISSING", f"缺少介面檔案 {file}。", 1)
+        try:
+            with jobs.lock(data):
+                jobs.sweep_orphans(data)
+        except (ToolError, OSError):
+            pass  # Orphan cleanup is best effort and must never block startup.
         server = bind_server(args.port, manifest["web"]["defaultPort"])
     except (ToolError, OSError) as exc:
         print(str(exc), file=sys.stderr)

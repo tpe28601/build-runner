@@ -24,7 +24,7 @@ const pageHelp = {
   history: ["歷史", [
     "可依 Workspace、結果及完成日期篩選紀錄。",
     "匯出 CSV 或 JSON 時，有勾選就匯出勾選項目，否則匯出目前篩選結果。",
-    "刪除前會要求確認。勾選「一併刪除 log」才會移除原始輸出。可從「AI 分析」回看已儲存的回答。",
+    "刪除前會要求確認，會連同該 Job 的 log 一併移除（執行中的 Job 不能刪）。已儲存的分析回答也會一併刪除。",
   ]],
   recipes: ["流程設定", [
     "可查看內建的 Clean + Build，或複製成自己的 Recipe，再編排步驟及連結參數表與產出物規則。",
@@ -153,13 +153,17 @@ for (const format of ["csv", "json"]) listen($("history-" + format), "click", as
 });
 
 listen($("history-delete"), "click", async () => {
-  const deleteLogs = $("history-delete-logs").checked;
-  if (!checkedHistory.size || !window.confirm("刪除 " + checkedHistory.size + " 筆歷史紀錄" + (deleteLogs ? "及其 log" : "") + "？")) return;
-  const { result, warnings } = await api("/history/delete", "POST", { ids: [...checkedHistory], deleteLogs, confirm: true });
-  checkedHistory.clear();
-  await loadHistory();
-  announce("已刪除 " + result.deleted + " 筆紀錄、" + result.deletedLogs + " 份 log。" +
-    (warnings.length ? " 有 " + warnings.length + " 份 log 無法刪除。" : ""), warnings.length > 0);
+  if (!checkedHistory.size) return;
+  if (!window.confirm("刪除 " + checkedHistory.size + " 筆歷史紀錄（連同 Job 目錄與 log）？")) return;
+  try {
+    const { result, warnings } = await api("/history/delete", "POST", { ids: [...checkedHistory], confirm: true });
+    checkedHistory.clear();
+    await loadHistory();
+    announce("已刪除 " + result.deleted + " 筆紀錄（" + result.deletedJobs + " 個 Job 資料夾）。" +
+      (warnings.length ? " 有 " + warnings.length + " 個資料夾無法刪除。" : ""), warnings.length > 0);
+  } catch (error) {
+    announce(error.message, true);
+  }
 });
 
 function notificationsEnabled() {

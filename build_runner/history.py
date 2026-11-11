@@ -6,6 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import tempfile
 import time
 
@@ -92,12 +93,18 @@ def retained(rows, days, count, *, now=None):
 
 
 def prune(data, rules):
+    """Drop rows past retention. Returns pruned job ids so callers can delete job folders."""
     days, count = rules.get("days", 0), rules.get("count", 0)
-    if days or count:
-        current = list_history(data)
-        remaining = retained(current, days, count)
-        if len(current) != len(remaining):
-            replace(data, remaining)
+    if not (days or count):
+        return []
+    current = list_history(data)
+    remaining = retained(current, days, count)
+    if len(current) == len(remaining):
+        return []
+    replace(data, remaining)
+    kept = {row.get("id") for row in remaining}
+    return [row["id"] for row in current
+            if isinstance(row.get("id"), str) and row["id"] not in kept and re.fullmatch(r"[a-f0-9]{32}", row["id"])]
 
 
 def export(rows, format):

@@ -6,6 +6,7 @@ from ctypes import wintypes
 from datetime import datetime, timezone
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -40,6 +41,50 @@ def get_job(data, job_id):
     if row is None:
         raise ToolError("JOB_NOT_FOUND", f"Job not found: {job_id}")
     return row
+
+
+def remove_job_dir(data, job_id):
+    """Delete a finished job's whole folder. Caller holds the job lock."""
+    folder = job_dir(data, job_id)
+    if not folder.exists():
+        return False
+    if folder.is_symlink() or not folder.is_dir() or folder.resolve().parent != (data / "jobs").resolve():
+        raise ToolError("INVALID_JOB_PATH", f"Refusing to remove unexpected folder for job {job_id}.")
+    shutil.rmtree(folder)
+    return True
+
+
+def sweep_orphans(data, *, max_age_sec=24 * 3600):
+    """Delete job folders with no history row that sat untouched for max_age_sec.
+
+    Covers rows whose history append failed and leftovers from older deletion
+    behaviour. Caller holds the job lock (or runs before the server starts).
+    """
+    known = {row.get("id") for row in history.list_history(data)}
+    cutoff = time.time() - max_age_sec
+    removed = []
+    jobs_root = data / "jobs"
+    for folder in sorted(jobs_root.iterdir()) if jobs_root.is_dir() else []:
+        if not re.fullmatch(r"[a-f0-9]{32}", folder.name) or folder.is_symlink() or not folder.is_dir():
+            continue
+        try:
+            row = read_json(folder / "status.json")
+        except (ToolError, OSError, ValueError):
+            row = None   # corrupt status file: still sweep the folder once it is old enough
+        if (isinstance(row, dict) and row.get("state") in ACTIVE) or folder.name in known:
+            continue
+        try:
+            newest = max((item.stat().st_mtime for item in folder.rglob("*") if item.is_file()), default=0)
+            if newest > cutoff:
+                continue
+        except OSError:
+            continue
+        try:
+            shutil.rmtree(folder)
+            removed.append(folder.name)
+        except OSError:
+            pass
+    return removed
 
 
 def save(data, row):
@@ -274,7 +319,12 @@ def finish(data, row, state, exit_code, *, message=None, report=None):
             **row, "durationSec": elapsed, "rootError": report["rootError"] if report else None,
             "logPath": str(log_path), "artifacts": row.get("artifacts", []),
         })
-        history.prune(data, settings(data).get("historyRetention", {}))
+        for pruned_id in history.prune(data, settings(data).get("historyRetention", {})):
+            if pruned_id != row["id"]:
+                try:
+                    remove_job_dir(data, pruned_id)
+                except (OSError, ToolError):
+                    pass
     except (OSError, ToolError) as exc:
         row["historyError"] = str(exc)
     save(data, row)

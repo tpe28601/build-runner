@@ -5,6 +5,8 @@ const nav = [...document.querySelectorAll(".nav a")];
 const filters = [...document.querySelectorAll("[data-kind]")];
 const pages = nav.map((link) => link.hash.slice(1));
 const activeStates = new Set(["queued", "running"]);
+const LIVE_WINDOW = 5000;   // max recent lines kept in the log DOM
+const TAIL_LINES = 2000;    // first-screen lines for a finished job
 const states = { queued: "排隊中", running: "執行中", success: "成功", failed: "失敗", stopped: "已停止", unknown: "未判定" };
 const tones = { queued: "warn", running: "accent", success: "ok", failed: "danger", stopped: "dry" };
 const selected = new Set();
@@ -21,7 +23,7 @@ let log = newLog("");
 function newLog(id) {
   return { id, offset: 0, line: 1, partial: "", index: -1, total: 0, kind: "", highlighted: [],
     target: null, searchVersion: 0, jumpVersion: 0, lastScan: 0, dirty: true, final: false,
-    reading: false, scanning: false, searching: 0 };
+    reading: false, scanning: false, searching: 0, booting: true };
 }
 
 function element(tag, classes, text) {
@@ -242,6 +244,7 @@ function renderOverview() {
 }
 
 function syncLogPicker() {
+  if (log.id && !jobs.some((row) => row.id === log.id)) chooseLog("");   // deleted job
   const options = [new Option("選擇 Job", "")];
   for (const row of jobs) options.push(new Option(row.workspace + " · " + row.recipe + " · " + states[row.state], row.id));
   $("log-job").replaceChildren(...options);
@@ -552,7 +555,7 @@ function appendLog(view, text) {
   view.partial = lines.pop();
   if (live.lastElementChild?.dataset.partial) live.lastElementChild.remove();
   // A large chunk can contain more lines than the retained window.
-  const skip = Math.max(0, lines.length - 20000);
+  const skip = Math.max(0, lines.length - LIVE_WINDOW);
   view.line += skip;
   const fragment = document.createDocumentFragment();
   for (const line of lines.slice(skip)) fragment.append(lineNode(view.line++, line.replace(/\r$/, ""), "live"));
@@ -562,7 +565,7 @@ function appendLog(view, text) {
     fragment.append(last);
   }
   live.append(fragment);
-  trimLive(20000 - $("archive-lines").childElementCount);
+  trimLive(LIVE_WINDOW - $("archive-lines").childElementCount);
   if ($("follow").checked && !live.hidden) output.scrollTop = output.scrollHeight;
   $("log-footer").textContent = "保留 " + live.childElementCount.toLocaleString("zh-TW") + " 行近期輸出";
 }
@@ -580,7 +583,7 @@ async function jumpTo(number) {
     if (view !== log || version !== view.jumpVersion) return;
     const archive = $("archive-lines");
     archive.replaceChildren(...result.lines.map((line, offset) => lineNode(result.firstLine + offset, line, "archive")));
-    trimLive(20000 - archive.childElementCount);
+    trimLive(LIVE_WINDOW - archive.childElementCount);
     $("live-lines").hidden = true;
     archive.hidden = false;
     $("back-live").hidden = false;
@@ -672,16 +675,29 @@ async function pollLog() {
     if (job) $("log-state").replaceWith(Object.assign(badge(job.state), { id: "log-state" }));
     updateAnalysisActions();
     if (!view.final) {
-      const { result } = await api("/jobs/" + view.id + "/log?from=" + view.offset);
-      if (view !== log) return;
-      view.offset = result.nextOffset;
-      if (result.text) {
-        appendLog(view, result.text);
+      if (view.booting) {
+        // First screen reads the file tail; replaying the whole log would stall
+        // the tab while the DOM window keeps only the most recent lines anyway.
+        const { result } = await api("/jobs/" + view.id + "/log?tail=" + TAIL_LINES);
+        if (view !== log) return;
+        view.booting = false;   // only after success: a failed tail must not degrade to ?from=0
+        view.offset = result.nextOffset;
+        view.line = result.startLine;
+        if (result.text) appendLog(view, result.text);
+        if (job && !activeStates.has(job.state)) view.final = true;
         view.dirty = true;
-      } else if (job && !activeStates.has(job.state)) {
-        // A status poll can observe completion before the last offset read.
-        view.final = true;
-        view.dirty = true;
+      } else {
+        const { result } = await api("/jobs/" + view.id + "/log?from=" + view.offset);
+        if (view !== log) return;
+        view.offset = result.nextOffset;
+        if (result.text) {
+          appendLog(view, result.text);
+          view.dirty = true;
+        } else if (job && !activeStates.has(job.state)) {
+          // A status poll can observe completion before the last offset read.
+          view.final = true;
+          view.dirty = true;
+        }
       }
     }
     if (view.dirty && !view.scanning && !view.searching && (view.final || Date.now() - view.lastScan >= 2500)) {

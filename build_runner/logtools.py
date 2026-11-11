@@ -1,9 +1,10 @@
 """Incremental log reads and compiler error classification."""
 
 import codecs
-from collections import deque
+from collections import deque, OrderedDict
 import io
 import re
+import threading
 
 
 def encoding_for(data, final=False):
@@ -43,6 +44,84 @@ def read_from(path, offset=0, *, final=True, limit=256 * 1024):
     decoder = codecs.getincrementaldecoder(encoding)(errors="replace")
     text = decoder.decode(raw, final=at_end)
     return {"text": text, "nextOffset": start + len(raw) - len(decoder.getstate()[0])}
+
+
+TAIL_CHUNK = 256 * 1024
+TAIL_MAX_READ = 16 * 1024 * 1024
+
+
+def _newline_count(path, stop):
+    """Count line breaks in the first ``stop`` bytes without decoding."""
+    total = 0
+    with path.open("rb") as stream:
+        remaining = stop
+        while remaining > 0:
+            raw = stream.read(min(TAIL_CHUNK, remaining))
+            if not raw:
+                break
+            total += raw.count(b"\n")
+            remaining -= len(raw)
+    return total
+
+
+def tail(path, count, *, final=True):
+    """Return the last ``count`` lines with their absolute numbering."""
+    try:
+        with path.open("rb") as stream:
+            stream.seek(0)
+            encoding, bom = encoding_for(stream.read(4096))
+            stream.seek(0, 2)
+            size = stream.tell()
+            if not size:
+                return {"text": "", "nextOffset": 0, "startLine": 1}
+            if encoding.startswith("utf-16"):
+                # UTF-16 line breaks cannot be located byte-wise: decode fully.
+                rows = deque(enumerate(iter_lines(path), 1), maxlen=count)
+                start_line = rows[0][0] if rows else 1
+                text = "".join(line + "\n" for _, line in rows)
+                pending = 0 if final else size % 2
+                if pending:
+                    # A half code unit sits at EOF: TextIOWrapper appended a replacement
+                    # character for it. Drop that and the newline we added so the
+                    # incremental reader can finish the code unit on the next poll.
+                    if text.endswith("\n"):
+                        text = text[:-1]
+                    if text.endswith("\ufffd"):
+                        text = text[:-1]
+                elif not final and rows:
+                    # Live job, whole code units: withhold the trailing newline unless the
+                    # file actually ends on one, so a half-written line stays partial.
+                    stream.seek(size - 2)
+                    if stream.read(2) != (b"\n\x00" if encoding.endswith("le") else b"\x00\n"):
+                        text = text[:-1]
+                return {"text": text, "nextOffset": size - pending, "startLine": start_line}
+            position, collected = size, bytearray()
+            while position > bom and collected.count(b"\n") <= count and len(collected) < TAIL_MAX_READ:
+                step = min(TAIL_CHUNK, position - bom)
+                position -= step
+                stream.seek(position)
+                collected[:0] = stream.read(step)
+            cut = 0
+            if position > bom:
+                head = collected.find(b"\n")
+                cut = len(collected) if head == -1 else head + 1
+            while collected.count(b"\n", cut) > count:
+                nxt = collected.find(b"\n", cut)
+                if nxt == -1:
+                    break
+                cut = nxt + 1
+            window = bytes(collected[cut:])
+            start = position + cut
+            if not bom and encoding == "utf-8":
+                encoding = encoding_for(window, final=final)[0]
+            start_line = _newline_count(path, start) + 1
+    except FileNotFoundError:
+        return {"text": "", "nextOffset": 0, "startLine": 1}
+    decoder = codecs.getincrementaldecoder(encoding)(errors="replace")
+    text = decoder.decode(window, final=final)
+    # While the job runs, hold back an incomplete trailing character for the next read.
+    pending = 0 if final else len(decoder.getstate()[0])
+    return {"text": text, "nextOffset": size - pending, "startLine": start_line}
 
 
 def iter_lines(path):
@@ -105,6 +184,34 @@ def classify(line):
     return None, None
 
 
+_SCAN_LOCK = threading.Lock()
+_SCAN_CACHE = OrderedDict()   # (path, size, mtime_ns, args) -> whole-file scan result
+_SCAN_CACHE_MAX = 8
+
+
+def _cached_scan(path, args, produce):
+    """Cache whole-file scans; file size and mtime invalidate appended output.
+
+    Callers must treat the returned value (including nested dicts) as read-only.
+    """
+    try:
+        info = path.stat()
+    except OSError:
+        return produce()
+    key = (str(path), info.st_size, info.st_mtime_ns) + args
+    with _SCAN_LOCK:
+        hit = _SCAN_CACHE.get(key)
+        if hit is not None:
+            _SCAN_CACHE.move_to_end(key)
+            return hit
+    value = produce()
+    with _SCAN_LOCK:
+        _SCAN_CACHE[key] = value
+        while len(_SCAN_CACHE) > _SCAN_CACHE_MAX:
+            _SCAN_CACHE.popitem(last=False)
+    return value
+
+
 def search(path, q="", kind=None):
     predicates = {
         None: lambda line: True,
@@ -121,6 +228,12 @@ def search(path, q="", kind=None):
 
 
 def search_page(path, q, kind, index, limit):
+    result = _cached_scan(path, ("search", q, kind, index, limit),
+                          lambda: _search_page(path, q, kind, index, limit))
+    return {"counts": dict(result["counts"]), "total": result["total"], "matches": list(result["matches"])}
+
+
+def _search_page(path, q, kind, index, limit):
     counts = {"error": 0, "fail": 0, "warning": 0}
     total = 0
     matches = []
@@ -143,6 +256,11 @@ def search_page(path, q, kind, index, limit):
 
 
 def triage(path):
+    report = _cached_scan(path, ("triage",), lambda: _triage(path))
+    return dict(report, errors=list(report["errors"]), cascadeErrors=list(report["cascadeErrors"]))
+
+
+def _triage(path):
     errors = {}
     cascades = []
     tail = deque(maxlen=200)

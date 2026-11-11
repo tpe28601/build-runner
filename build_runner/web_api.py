@@ -206,7 +206,11 @@ class Api:
             response = self.public_settings(values)
             write_json(self.data / "settings.json", values)
             if "historyRetention" in body:
-                history.prune(self.data, values["historyRetention"])
+                for pruned_id in history.prune(self.data, values["historyRetention"]):
+                    try:
+                        jobs.remove_job_dir(self.data, pruned_id)
+                    except (OSError, ToolError):
+                        pass
             if "maxConcurrentJobs" in body:
                 jobs.dispatch(self.data)
         return ok(response)
@@ -229,26 +233,27 @@ class Api:
     def delete_history(self, body):
         confirm(body)
         ids = self.history_ids(body.get("ids"))
-        deleted_logs, warnings = 0, []
+        warnings = []
         with jobs.lock(self.data):
             rows = history.list_history(self.data)
             removed = [row for row in rows if row["id"] in ids]
+            active = {row["id"] for row in jobs.list_jobs(self.data) if row["state"] in jobs.ACTIVE}
+            blocked = next((row["id"] for row in removed if row["id"] in active), None)
+            if blocked:
+                raise HttpError(409, "JOB_ACTIVE", "有紀錄對應的 Job 仍在排隊或執行中，請先停止再刪除。")
+            analysing = next((row["id"] for row in removed if self.analyses.active_for(row["id"])), None)
+            if analysing:
+                raise HttpError(409, "AI_RUNNING", "有 Job 正在進行 AI 分析，請先結束分析再刪除。")
+            deleted = 0
             if removed:
                 history.replace(self.data, [row for row in rows if row["id"] not in ids])
-            if body.get("deleteLogs") is True:
-                jobs_root = (self.data / "jobs").resolve()
                 for row in removed:
-                    log = jobs.job_dir(self.data, row["id"]) / "build.log"
                     try:
-                        if log.parent.resolve().parent != jobs_root or log.is_symlink():
-                            raise OSError("Unexpected log path")
-                        log.unlink()
-                        deleted_logs += 1
-                    except FileNotFoundError:
-                        pass
-                    except OSError as exc:
+                        if jobs.remove_job_dir(self.data, row["id"]):
+                            deleted += 1
+                    except (OSError, ToolError) as exc:
                         warnings.append({"jobId": row["id"], "message": str(exc)})
-        return ok({"deleted": len(removed), "deletedLogs": deleted_logs}, warnings=warnings)
+        return ok({"deleted": len(removed), "deletedJobs": deleted}, warnings=warnings)
 
     def schedule_route(self, method, body):
         if method == "GET":
@@ -541,6 +546,9 @@ class Api:
                     start = max(1, line - 10)
                     context = list(islice(logtools.iter_lines(path), start - 1, line + 10))
                     return ok({"firstLine": start, "lines": context})
+                if "tail" in query:
+                    return ok(logtools.tail(path, integer(query, "tail", 2000, minimum=1, maximum=50000),
+                                            final=row["state"] not in jobs.ACTIVE))
                 offset = integer(query, "from", 0)
                 return ok(logtools.read_from(path, offset, final=row["state"] not in jobs.ACTIVE))
             if action == "search":
