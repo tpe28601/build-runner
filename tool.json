@@ -3,7 +3,7 @@
   "kind": "tool",
   "id": "build-runner",
   "name": "Build Runner",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Run local build recipes and inspect logs and build history.",
   "runtime": { "kind": "python", "min": "3.10" },
   "web": { "entry": "build_runner/web.py", "defaultPort": 8740, "health": "/api/health" },

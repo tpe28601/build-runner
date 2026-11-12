@@ -817,12 +817,43 @@ async function tick() {
   }
 }
 
-document.addEventListener("tb-theme-change", () => { $("theme").value = TbTheme.get().mode; });
-$("theme").value = TbTheme.get().mode;
-$("theme").addEventListener("change", () => TbTheme.set($("theme").value));
+const themeButton = $("theme-toggle");
+const themeLabels = { light: "淺色", dark: "深色", system: "跟隨系統" };
+const themeIcons = { light: "sun", dark: "moon", system: "monitor" };
+function renderThemeButton() {
+  const { mode } = TbTheme.get();
+  themeButton.innerHTML = TbIcons.svg(themeIcons[mode], { anim: "wiggle" });
+  themeButton.title = "主題：" + themeLabels[mode] + "（點一下切換）";
+  themeButton.setAttribute("aria-label", themeButton.title);
+}
+document.addEventListener("tb-theme-change", renderThemeButton);
+themeButton.addEventListener("click", () => {
+  const { modes } = TbTheme;
+  TbTheme.set(modes[(modes.indexOf(TbTheme.get().mode) + 1) % modes.length]);
+});
+renderThemeButton();
+
+async function pollServerState() {
+  const badge = $("server-state");
+  let label = "伺服器未回應";
+  let tone = "danger";
+  try {
+    const health = await api("/health");
+    if (health.ok) {
+      $("server-port").textContent = "本機服務 port " + health.port;
+      label = "連線正常";
+      tone = "ok";
+    }
+  } catch (_) { /* 下次輪詢重新連線 */ }
+  if (badge.textContent !== label) badge.textContent = label;
+  badge.className = "tb-badge tb-badge--" + tone;
+  setTimeout(pollServerState, 3000);
+}
+
 window.addEventListener("hashchange", navigate);
 document.addEventListener("DOMContentLoaded", () => {
   initializeOperations();
   navigate();
+  if (!document.documentElement.dataset.embedded) pollServerState();
   setTimeout(tick, 1000);
 });

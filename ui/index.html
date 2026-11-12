@@ -8,35 +8,31 @@
   <link rel="stylesheet" href="/style.css">
   <script src="/tb-theme.js"></script>
   <script defer src="/tb-icons.js"></script>
-<script defer src="/tb-dirpicker.js"></script>
+  <script defer src="/tb-dirpicker.js"></script>
   <script defer src="/app.js"></script>
   <script defer src="/config.js"></script>
   <script defer src="/operations.js"></script>
 </head>
 <body class="tb-app">
-  <div class="shell">
-    <header class="topbar tb-hide-embedded">
-      <div class="tb-brand">
-        <span class="tb-brand__logo"><i data-tb-icon="terminal"></i></span>
-        <div class="tb-brand__text"><div class="tb-brand__name">Build Runner</div><div class="tb-brand__sub">Dev-Toolbox</div></div>
-      </div>
-      <label class="theme tb-field">
-        <span class="tb-field__label">外觀</span>
-        <select id="theme" class="tb-select">
-          <option value="system">跟隨系統</option><option value="light">淺色</option><option value="dark">深色</option>
-        </select>
-      </label>
-    </header>
-    <nav class="tb-tabs nav" aria-label="Build Runner 分頁">
-      <a class="tb-tab" href="#overview"><i data-tb-icon="layout-dashboard"></i>總覽</a>
-      <a class="tb-tab" href="#workspaces"><i data-tb-icon="folder-open"></i>Workspace</a>
-      <a class="tb-tab" href="#build"><i data-tb-icon="play"></i>Build</a>
-      <a class="tb-tab" href="#log"><i data-tb-icon="terminal"></i>Log</a>
-      <a class="tb-tab" href="#history"><i data-tb-icon="history"></i>歷史</a>
-      <a class="tb-tab" href="#recipes"><i data-tb-icon="git-branch"></i>流程設定</a>
-      <a class="tb-tab" href="#settings"><i data-tb-icon="settings"></i>設定</a>
-    </nav>
+  <header class="tool-topbar tb-hide-embedded">
+    <div class="tool-topbar__brand"><span class="tb-card__icon"><i data-tb-icon="terminal" data-size="17"></i></span>Build Runner</div>
+    <div class="tb-row tb-row--end tool-topbar__controls">
+      <span id="server-port" class="tool-topbar__port">本機服務 port —</span>
+      <span id="server-state" class="tb-badge" role="status">連線中…</span>
+      <button id="theme-toggle" class="tb-btn tb-btn--icon" type="button" aria-label="切換主題"><i data-tb-icon="sun"></i></button>
+    </div>
+  </header>
+  <nav class="tb-tabs nav tool-tabs" aria-label="Build Runner 分頁">
+    <a class="tb-tab" href="#overview"><i data-tb-icon="layout-dashboard"></i>總覽</a>
+    <a class="tb-tab" href="#workspaces"><i data-tb-icon="folder-open"></i>Workspace</a>
+    <a class="tb-tab" href="#build"><i data-tb-icon="play"></i>Build</a>
+    <a class="tb-tab" href="#log"><i data-tb-icon="terminal"></i>Log</a>
+    <a class="tb-tab" href="#history"><i data-tb-icon="history"></i>歷史</a>
+    <a class="tb-tab" href="#recipes"><i data-tb-icon="git-branch"></i>流程設定</a>
+    <a class="tb-tab" href="#settings"><i data-tb-icon="settings"></i>設定</a>
+  </nav>
 
+  <div class="shell">
     <main>
       <section id="overview">
         <div class="page-head">
