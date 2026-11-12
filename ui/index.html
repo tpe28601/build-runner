@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/style.css">
   <script src="/tb-theme.js"></script>
   <script defer src="/tb-icons.js"></script>
+<script defer src="/tb-dirpicker.js"></script>
   <script defer src="/app.js"></script>
   <script defer src="/config.js"></script>
   <script defer src="/operations.js"></script>
@@ -309,19 +310,7 @@
       </section>
     </main>
   </div>
-  <dialog id="folder-picker" class="tb-dialog folder-picker" aria-labelledby="folder-title">
-    <h2 id="folder-title" class="tb-dialog__title">選擇資料夾</h2>
-    <div class="row">
-      <button type="button" id="folder-roots" class="tb-btn">磁碟清單</button>
-      <button type="button" id="folder-parent" class="tb-btn" disabled>上層</button>
-    </div>
-    <p id="folder-location" class="tb-mono folder-location" role="status"></p>
-    <div id="folder-entries" class="stack folder-entries" aria-label="資料夾清單"></div>
-    <div class="tb-dialog__actions">
-      <button type="button" id="folder-cancel" class="tb-btn" autofocus>取消</button>
-      <button type="button" id="folder-select" class="tb-btn tb-btn--primary" disabled>選取這個資料夾</button>
-    </div>
-  </dialog>
+  <!-- 資料夾挑選改用 ui-kit tb-dirpicker.js 共用元件（DOM 由元件動態產生） -->
   <dialog id="page-help" class="tb-dialog page-help" aria-labelledby="page-help-title">
     <h2 id="page-help-title" class="tb-dialog__title">功能說明</h2>
     <div id="page-help-content"></div>

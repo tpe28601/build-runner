@@ -109,10 +109,16 @@ class Api:
             if body.get("relative") is True:
                 if not body.get("workspaceId"):
                     return ok({"current": None, "parent": None, "selection": None, "truncated": False,
-                               "items": [{"name": row["name"], "path": "", "workspaceId": row["id"]}
+                               "items": [{"name": row["name"], "path": "", "rootPath": row["path"], "workspaceId": row["id"]}
                                          for row in workspaces.list_workspaces(self.data)]})
                 workspace = self.workspace_by_id(string(body, "workspaceId"))
+                if body.get("scan"):
+                    return ok(workspaces.scan_repos(path.strip(), workspace["path"],
+                                                    int(body.get("depth") or 2), int(body.get("limit") or 50)))
                 return ok(workspaces.browse_folder(path.strip(), workspace["path"]))
+            if body.get("scan"):
+                return ok(workspaces.scan_repos(path.strip(), None,
+                                                int(body.get("depth") or 2), int(body.get("limit") or 50)))
             return ok(workspaces.browse_folder(path.strip()))
         if method == "POST" and path == "/api/workspaces/import-worktrees":
             return self.import_worktrees(body)

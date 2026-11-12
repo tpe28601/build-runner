@@ -65,6 +65,44 @@ def browse_folder(path, scope=None):
             "items": sorted(items, key=lambda item: item["name"].casefold()), "truncated": truncated}
 
 
+# 掃描 Git Repo 時略過的系統／依賴目錄（與 Git Ref Manager Browse-Filesystem 一致）
+SKIP_SCAN_DIRS = {"$RECYCLE.BIN", "System Volume Information", "Windows",
+                  "Program Files", "Program Files (x86)", "ProgramData", "node_modules"}
+
+
+def scan_repos(path, scope=None, depth=2, limit=50):
+    """在 path 底下以 BFS 找 .git 目錄（深度 depth、最多 limit 個），scope 限制瀏覽範圍。"""
+    try:
+        start = Path(path).expanduser().resolve()
+    except OSError as exc:
+        raise ToolError("FOLDER_UNAVAILABLE", "無法讀取此資料夾。") from exc
+    root = Path(scope).expanduser().resolve() if scope is not None else None
+    if root is not None and not start.is_relative_to(root):
+        raise ToolError("INVALID_FOLDER", "此資料夾超出可瀏覽範圍。")
+    found, stack = [], [(start, 0)]
+    while stack and len(found) < limit:
+        current, level = stack.pop()
+        try:
+            with os.scandir(current) as entries:
+                children = sorted((e for e in entries if e.is_dir(follow_symlinks=False)),
+                                  key=lambda e: e.name.casefold())
+        except OSError:
+            continue
+        for entry in children:
+            if len(found) >= limit:
+                break
+            if entry.name in SKIP_SCAN_DIRS:
+                continue
+            child = Path(entry.path)
+            if root is not None and not child.is_relative_to(root):
+                continue
+            if (child / ".git").exists():
+                found.append({"path": str(child), "name": entry.name})
+            if level < depth:
+                stack.append((child, level + 1))
+    return {"repos": found}
+
+
 def list_workspaces(data):
     rows = read_json(data / "workspaces.json", [])
     if not isinstance(rows, list) or any(

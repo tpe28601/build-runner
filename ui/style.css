@@ -100,12 +100,7 @@ legend { margin-bottom: 8px; }
 .parameter-copy { display: grid; gap: 1px; }
 .parameter-flag { color: var(--tb-accent); font-weight: 650; }
 input[type="file"] { min-width: 0; max-width: 100%; }
-.folder-picker { max-height: calc(100dvh - 24px); }
-.folder-picker::backdrop { background: color-mix(in srgb, var(--tb-text) 34%, transparent); }
-.folder-location { overflow-wrap: anywhere; margin: 10px 0; }
-.folder-entries { max-height: min(42vh, 340px); overflow: auto; padding: 3px; }
-.folder-entries button { justify-content: start; white-space: normal; text-align: start; overflow-wrap: anywhere; }
-.folder-entries button span:first-of-type { min-width: 0; }
+/* 資料夾挑選已改用 ui-kit tb-dirpicker（.tb-dp-* 樣式在 ui-kit.css） */
 .page-head-actions { margin-inline-start: auto; }
 .page-help { width: min(560px, calc(100% - 24px)); }
 .page-help::backdrop { background: color-mix(in srgb, var(--tb-text) 34%, transparent); }

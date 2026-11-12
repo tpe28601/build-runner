@@ -62,70 +62,53 @@ function listen(node, event, action) {
   });
 }
 
-const folderPicker = $("folder-picker");
-let folderSession;
-
+// ---------- 資料夾挑選（ui-kit tb-dirpicker 共用元件） ----------
 function openFolderPicker(input, relative = false) {
-  folderSession = { input, relative, version: 0 };
-  $("folder-roots").textContent = relative ? "Workspace 清單" : "磁碟清單";
-  folderPicker.showModal();
-  const start = input.value.trim().split("{", 1)[0];
-  const absolute = /^(?:[a-z]:[\\/]|\/)/i.test(start);
-  return loadFolder(folderSession, !relative && absolute ? start : "");
-}
-
-async function loadFolder(session, path, workspaceId = session.workspaceId) {
-  const version = ++session.version;
-  const list = $("folder-entries");
-  const label = session.relative ? "選擇 Workspace" : "選擇磁碟";
-  session.workspaceId = workspaceId;
-  session.selection = null;
-  session.parent = null;
-  $("folder-parent").disabled = $("folder-select").disabled = true;
-  $("folder-location").textContent = path || label;
-  list.replaceChildren(empty("讀取中…"));
-  try {
-    const { result } = await api("/browse", "POST", { path, relative: session.relative, workspaceId });
-    if (folderSession !== session || session.version !== version) return;
-    session.selection = result.selection;
-    session.parent = result.parent;
-    $("folder-location").textContent = result.current || label;
-    $("folder-parent").disabled = !result.parent;
-    $("folder-select").disabled = result.selection === null;
-    const entries = result.items.map((row) => {
-      const item = button("", () => loadFolder(session, row.path, row.workspaceId || session.workspaceId));
-      item.append(icon("folder-open"), element("span", "", row.name));
-      if (row.hasGit) item.append(element("span", "tb-badge tb-badge--accent", "Git"));
-      return item;
-    });
-    list.replaceChildren(...(entries.length ? entries : [empty(result.current ? "沒有子資料夾。" : "沒有可選項目。")]));
-    if (result.truncated) list.append(element("p", "tb-muted", "僅顯示前 500 個資料夾。"));
-    TbIcons.render(list);
-  } catch (error) {
-    if (folderSession === session && session.version === version) list.replaceChildren(empty(error.message));
+  let wsId = null, wsRoot = null;
+  const wsRoots = {};   // 正規化 Workspace 根路径 -> {id, root}
+  async function fetchDir(path, opts) {
+    const body = { path: path || "" };
+    if (relative) {
+      body.relative = true;
+      const key = (path || "").replace(/[\\/]+$/, "").toLowerCase();
+      if (!wsId && wsRoots[key]) { wsId = wsRoots[key].id; wsRoot = wsRoots[key]; }
+      if (wsId) body.workspaceId = wsId;
+    }
+    if (opts && opts.scan) { body.scan = true; body.depth = opts.depth || 2; body.limit = opts.limit || 50; }
+    const { result } = await api("/browse", "POST", body);
+    if (relative && !wsId && result.items) {
+      // Workspace 清單：轉成可瀏覽的絕對路徑項目，並記住各自所屬 Workspace
+      result.items = result.items.map((item) => {
+        if (!item.workspaceId || !item.rootPath) return item;
+        const key = item.rootPath.replace(/[\\/]+$/, "").toLowerCase();
+        wsRoots[key] = { id: item.workspaceId, root: item.rootPath };
+        return { name: item.name, path: item.rootPath, hasGit: false };
+      });
+    }
+    return result;
   }
+  const raw = input.value.trim().split("{", 1)[0];
+  const absolute = /^(?:[a-z]:[\\/]|\/)/i.test(raw);
+  return TbDirPicker.open({
+    title: relative ? "選擇 Workspace 資料夾" : "選擇資料夾",
+    start: !relative && absolute ? raw : "",
+    fetchDir,
+  }).then((picked) => {
+    if (!picked) return;
+    if (relative && wsRoot && picked.toLowerCase().startsWith(wsRoot.root.toLowerCase())) {
+      const rel = picked.slice(wsRoot.root.length).replace(/^[\\/]+/, "");
+      input.value = rel ? rel.split(/[\\/]+/).join("/") : ".";
+    } else {
+      input.value = picked;
+    }
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.focus();
+  });
 }
 
 for (const trigger of document.querySelectorAll("[data-folder-target]")) {
   listen(trigger, "click", () => openFolderPicker($(trigger.dataset.folderTarget)));
 }
-listen($("folder-roots"), "click", () => {
-  folderSession.workspaceId = undefined;
-  return loadFolder(folderSession, "");
-});
-listen($("folder-parent"), "click", () => loadFolder(folderSession, folderSession.parent));
-listen($("folder-cancel"), "click", () => folderPicker.close());
-listen($("folder-select"), "click", () => {
-  if (!folderSession?.selection) return;
-  const input = folderSession.input;
-  input.value = folderSession.selection;
-  input.dispatchEvent(new Event("input", { bubbles: true }));
-  folderPicker.close();
-  input.focus();
-});
-folderPicker.addEventListener("close", () => {
-  if (!folderPicker.open) folderSession = null;
-});
 
 async function api(path, method = "GET", body = {}) {
   const options = method === "GET" ? {} : {

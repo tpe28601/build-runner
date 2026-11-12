@@ -8,6 +8,6 @@
   "runtime": { "kind": "python", "min": "3.10" },
   "web": { "entry": "build_runner/web.py", "defaultPort": 8740, "health": "/api/health" },
   "cli": { "entry": "build_runner/cli.py", "menu": false, "json": true },
-  "uiKit": "3.1.0",
+  "uiKit": "3.2.0",
   "dataDir": "%LOCALAPPDATA%/DevToolbox/build-runner"
 }

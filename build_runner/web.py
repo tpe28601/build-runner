@@ -33,6 +33,7 @@ STATIC_FILES = {
     "/ui-kit.css": ("ui-kit.css", "text/css"),
     "/tb-theme.js": ("tb-theme.js", "text/javascript"),
     "/tb-icons.js": ("tb-icons.js", "text/javascript"),
+    "/tb-dirpicker.js": ("tb-dirpicker.js", "text/javascript"),
 }
 
 
