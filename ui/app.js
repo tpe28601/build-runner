@@ -9,6 +9,8 @@ const LIVE_WINDOW = 5000;   // max recent lines kept in the log DOM
 const TAIL_LINES = 2000;    // first-screen lines for a finished job
 const states = { queued: "排隊中", running: "執行中", success: "成功", failed: "失敗", stopped: "已停止", unknown: "未判定" };
 const tones = { queued: "warn", running: "accent", success: "ok", failed: "danger", stopped: "dry" };
+// 與後端 build_runner/prompts.py 相同的提示偵測（账号/密码/passphrase 等待輸入）
+const PROMPT_PATTERN = /\benter (?:your username|password for|passphrase for)\b/i;
 const selected = new Set();
 const gitDetails = new Map();
 let page;
@@ -23,7 +25,7 @@ let log = newLog("");
 function newLog(id) {
   return { id, offset: 0, line: 1, partial: "", index: -1, total: 0, kind: "", highlighted: [],
     target: null, searchVersion: 0, jumpVersion: 0, lastScan: 0, dirty: true, final: false,
-    reading: false, scanning: false, searching: 0, booting: true };
+    reading: false, scanning: false, searching: 0, booting: true, promptSeen: false, tail: "" };
 }
 
 function element(tag, classes, text) {
@@ -141,6 +143,11 @@ function announce(text, error = false, pending = false) {
   }
 }
 
+function promptAtTail(text) {
+  const tail = (text || "").slice(-4096).replace(/\s+$/, "");
+  return !!tail && PROMPT_PATTERN.test(tail.slice(tail.lastIndexOf("\n") + 1));
+}
+
 function badge(state) {
   return element("span", "tb-badge" + (tones[state] ? " tb-badge--" + tones[state] : ""), states[state] || "尚無紀錄");
 }
@@ -204,6 +211,16 @@ function jobCard(row) {
       await api("/jobs/" + row.id + "/stop", "POST", { confirm: true });
       await syncJobs();
     }));
+  }
+  if (row.state === "running") {
+    // 給卡住的互動提示（账号/密码/passphrase）送一個 Enter；後端 runner 0.5 秒內送入。
+    const enter = button("送 Enter", async () => {
+      await api("/jobs/" + row.id + "/enter", "POST");
+      announce("已送出 Enter，等待輸入的步驟會繼續。");
+      enter.disabled = true;
+      setTimeout(() => { enter.disabled = false; }, 3000);
+    });
+    foot.append(enter);
   }
   foot.append(elapsed);
   card.append(head, details);
@@ -539,6 +556,9 @@ function trimLive(limit) {
 function appendLog(view, text) {
   const output = $("log-output");
   const live = $("live-lines");
+  // Keep the log's last lines across chunks: an input prompt can end exactly on
+  // a read boundary, so only a cumulative tail can be matched (updateEnterBanner).
+  view.tail = (view.tail + text).slice(-4096);
   const lines = (view.partial + text).split("\n");
   view.partial = lines.pop();
   if (live.lastElementChild?.dataset.partial) live.lastElementChild.remove();
@@ -583,6 +603,21 @@ async function jumpTo(number) {
   const output = $("log-output");
   output.scrollTop += target.getBoundingClientRect().top - output.getBoundingClientRect().top - 24;
 }
+
+// ---------- 輸入提示（等待按 Enter 的帳密／passphrase 提示）----------
+function updateEnterBanner(job) {
+  const banner = $("enter-banner");
+  if (banner) banner.hidden = !(job && job.state === "running" && log.promptSeen);
+}
+
+listen($("enter-send"), "click", async () => {
+  if (!log.id) return;
+  const send = $("enter-send");
+  await api("/jobs/" + log.id + "/enter", "POST");
+  announce("已送出 Enter，等待輸入的步驟會繼續。");
+  send.disabled = true;
+  setTimeout(() => { send.disabled = false; }, 3000);
+});
 
 function renderTriage(view, report) {
   if (view !== log) return;
@@ -672,6 +707,7 @@ async function pollLog() {
         view.offset = result.nextOffset;
         view.line = result.startLine;
         if (result.text) appendLog(view, result.text);
+        view.promptSeen = promptAtTail(view.tail);
         if (job && !activeStates.has(job.state)) view.final = true;
         view.dirty = true;
       } else {
@@ -680,6 +716,7 @@ async function pollLog() {
         view.offset = result.nextOffset;
         if (result.text) {
           appendLog(view, result.text);
+          view.promptSeen = promptAtTail(view.tail);
           view.dirty = true;
         } else if (job && !activeStates.has(job.state)) {
           // A status poll can observe completion before the last offset read.
@@ -688,6 +725,7 @@ async function pollLog() {
         }
       }
     }
+    updateEnterBanner(job);
     if (view.dirty && !view.scanning && !view.searching && (view.final || Date.now() - view.lastScan >= 2500)) {
       view.dirty = false;
       view.scanning = true;

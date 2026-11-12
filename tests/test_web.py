@@ -172,6 +172,48 @@ class WebTests(unittest.TestCase):
         self.api("POST", f"/api/jobs/{job_id}/ai", {"method": "copy", "preview": True,
                                                     "logScope": "range", "logStart": "2"}, code=400)
 
+    def test_enter_button_requires_running_job(self):
+        running = "e" * 32
+        stopped = "f" * 32
+        dead = "0" * 32
+        # The runner liveness check opens the recorded pid, so use a real live process.
+        holder = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)"],
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.addCleanup(lambda: (holder.kill(), holder.wait()))  # LIFO-safe: kill before wait
+        import build_runner.jobs as jobs_module  # noqa: PLC0415 - keep the module import local to this test
+        with jobs_module.process_token(holder.pid) as token:
+            pass
+        for job_id, state, pid, pid_token in ((running, "running", holder.pid, token),
+                                              (stopped, "stopped", 999999, None),
+                                              (dead, "running", 999999, token)):
+            folder = self.data / "jobs" / job_id
+            folder.mkdir(parents=True)
+            (folder / "status.json").write_text(json.dumps(
+                {"id": job_id, "workspace": "PlatformA", "state": state, "pid": pid, "pidToken": pid_token,
+                 "queuedAt": "2026-11-01T00:00:00+00:00"}), encoding="utf-8")
+        self.assertEqual(self.api("POST", f"/api/jobs/{running}/enter", {})["result"], {"sent": True})
+        self.assertTrue((self.data / "jobs" / running / "enter.request").is_file())
+        self.assertEqual(self.api("POST", f"/api/jobs/{stopped}/enter", {}, code=409)["error"]["code"],
+                         "JOB_NOT_RUNNING")
+        self.assertFalse((self.data / "jobs" / stopped / "enter.request").exists())
+        # A row still marked running whose runner died must not accept the request either.
+        self.assertEqual(self.api("POST", f"/api/jobs/{dead}/enter", {}, code=409)["error"]["code"],
+                         "JOB_NOT_RUNNING")
+        self.assertFalse((self.data / "jobs" / dead / "enter.request").exists())
+        # Retire the fake runner rows so later reconciles never see them as active.
+        for job_id in (running, dead):
+            (self.data / "jobs" / job_id / "status.json").write_text(json.dumps(
+                {"id": job_id, "workspace": "PlatformA", "state": "stopped",
+                 "queuedAt": "2026-11-01T00:00:00+00:00"}), encoding="utf-8")
+
+    def test_auto_skip_prompts_setting_roundtrip(self):
+        self.assertIs(self.api("GET", "/api/settings")["result"]["autoSkipPrompts"], True)
+        self.assertIs(self.api("POST", "/api/settings", {"autoSkipPrompts": False})["result"]["autoSkipPrompts"], False)
+        self.assertIs(self.api("GET", "/api/settings")["result"]["autoSkipPrompts"], False)
+        self.assertEqual(self.api("POST", "/api/settings", {"autoSkipPrompts": "yes"}, code=400)["error"]["code"],
+                         "INVALID_PROMPT_SETTING")
+        self.assertIs(self.api("POST", "/api/settings", {"autoSkipPrompts": True})["result"]["autoSkipPrompts"], True)
+
     def test_write_guards_and_json_errors(self):
         headers = {"Content-Type": "application/json"}
         status, result, _ = self.request("POST", "/api/settings", "{}", headers)

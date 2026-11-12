@@ -72,7 +72,7 @@ class MCPTests(unittest.TestCase):
         tools = self.request("tools/list")["result"]["tools"]
         self.assertEqual({tool["name"] for tool in tools}, {
             "list_workspaces", "list_recipes", "describe_params", "start_build", "get_job",
-            "read_log", "search_log", "triage_job", "stop_job", "list_history",
+            "read_log", "search_log", "triage_job", "stop_job", "send_enter", "list_history",
         })
         self.assertEqual(self.tool("list_workspaces")[0]["name"], "PlatformA")
         recipe = self.tool("list_recipes")[0]

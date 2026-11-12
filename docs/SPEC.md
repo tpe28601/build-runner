@@ -174,6 +174,7 @@ Dev-Toolbox 第四個工具：管理多個程式碼資料夾、用可自訂的�
 | `search_log` | 在 log 搜尋關鍵字或規則，回傳行號與片段 |
 | `triage_job` | 回傳判讀結果（結果、根本錯誤、連鎖錯誤） |
 | `stop_job` | 停止 Job |
+| `send_enter` | 對卡在輸入提示（帳號／密碼／passphrase）的執行中 Job 送一次 Enter |
 | `list_history` | 最近 N 筆歷史 |
 
 - 安全限制：agent **不能**傳任意指令，只能用已存在的 Recipe 與參數表裡有的參數；不提供刪除歷史、改設定的 tool。
@@ -210,9 +211,10 @@ exit code 照 TOOL-SPEC（0 成功、1 失敗、3 參數錯、4 取消、5 環�
 | `GET /api/jobs/<id>/search?q=&kind=error|fail|warning` | 搜尋 |
 | `GET /api/jobs/<id>/triage`、`POST /api/jobs/<id>/ai` | 判讀／AI 分析（ai POST 可帶 `logScope`/`logStart`/`logEnd`，`preview: true` 只回提示詞） |
 | `POST /api/jobs/<id>/stop` | 停止 |
+| `POST /api/jobs/<id>/enter` | 對執行中 Job 送一次 Enter（非執行中回 409，不需 confirm） |
 | `GET /api/history`、`POST /api/history/export`、`POST /api/history/delete` | 歷史（delete 要 `confirm: true`） |
 | `GET/POST/DELETE /api/schedules` | 排程 |
-| `GET/POST /api/settings` | 設定（同時數量、AI 送法與端點、提示詞範本、通知、保留天數） |
+| `GET/POST /api/settings` | 設定（同時數量、互動提示自動送 Enter、AI 送法與端點、提示詞範本、通知、保留天數） |
 
 安全規則全部照 TOOL-SPEC 第 5 節（Host 檢查、`X-Toolbox-Request`、Origin、CSP、白名單靜態檔、body 上限）。
 TOOL-SPEC 寫「同一時間只允許一個會寫入的工作」：本工具的 build Job 例外，改由上面的衝突檢查管理；設定檔寫入仍要加鎖。
@@ -224,10 +226,10 @@ TOOL-SPEC 寫「同一時間只允許一個會寫入的工作」：本工具的 
 | 總覽 | 正在跑／排隊的 Job 卡片（進度、步驟、耗時、停止鈕），最近結果 |
 | Workspace | 資料夾清單、git 狀態、新增／匯入 worktree、勾選後「開始 build」 |
 | Build | 選 Workspace（多選）＋ Recipe ＋ 參數（分組勾選＋說明＋搜尋＋指令預覽）→ 衝突檢查 → 開始 |
-| Log | 選 Job，即時 log、error／fail／warning 快速搜尋、判讀摘要、AI 分析 |
+| Log | 選 Job，即時 log、error／fail／warning 快速搜尋、判讀摘要、AI 分析、偵測到輸入提示時顯示「按 Enter 繼續」 |
 | 流程設定 | Recipe、參數表匯入、preset、產出物規則（含預覽） |
 | 歷史 | 表格、篩選、匯出、勾選刪除 |
-| 設定 | 同時數量、AI 送法（OpenCode／自訂端點／複製）、通知、排程、保留規則 |
+| 設定 | 同時數量、互動提示（autoSkipPrompts）、AI 送法（OpenCode／自訂端點／複製）、通知、排程、保留規則 |
 
 圖標用 Lucide（`tb-icons.js`），顏色只用 `--tb-*` token，支援 `?embedded=1`，400px 寬不破版。
 

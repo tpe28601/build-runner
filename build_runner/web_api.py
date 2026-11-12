@@ -188,6 +188,7 @@ class Api:
     @staticmethod
     def public_settings(values):
         return {"maxConcurrentJobs": values.get("maxConcurrentJobs", 2),
+                "autoSkipPrompts": bool(values.get("autoSkipPrompts", True)),
                 "historyRetention": {"days": 0, "count": 0} | values.get("historyRetention", {}),
                 "notifications": {"desktop": False, "title": True, "sound": False} | values.get("notifications", {}),
                 "ai": ai.public(ai.configure(values.get("ai", {}), {}))}
@@ -200,6 +201,11 @@ class Api:
                 if type(limit) is not int or limit < 0:
                     raise ToolError("INVALID_CONCURRENCY", "Concurrency must be a nonnegative integer.")
                 values["maxConcurrentJobs"] = limit
+            if "autoSkipPrompts" in body:
+                flag = body["autoSkipPrompts"]
+                if type(flag) is not bool:
+                    raise HttpError(400, "INVALID_PROMPT_SETTING", "自動送 Enter 設定必須是布林值。")
+                values["autoSkipPrompts"] = flag
             if "historyRetention" in body:
                 rules = body["historyRetention"]
                 if (not isinstance(rules, dict) or any(type(rules.get(key, 0)) is not int
@@ -588,6 +594,14 @@ class Api:
         if method == "POST" and action == "stop":
             confirm(body)
             return ok(jobs.stop(self.data, job_id))
+        if method == "POST" and action == "enter":
+            if row["state"] != "running":
+                raise HttpError(409, "JOB_NOT_RUNNING", "Job 不是執行中，無法送 Enter。")
+            with jobs.process_token(row.get("pid") or 0) as token:
+                if not jobs.runner_matches(row, token):
+                    raise HttpError(409, "JOB_NOT_RUNNING", "Runner 已結束，無法送 Enter。")
+            jobs.request_enter(self.data, job_id)
+            return ok({"sent": True})
         if action == "ai":
             folder = path.parent
             if method == "GET":

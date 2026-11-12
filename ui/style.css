@@ -52,6 +52,13 @@ legend { margin-bottom: 8px; }
 }
 .preview-warning[data-error] { background: var(--tb-danger-soft); color: var(--tb-danger); }
 .preview-warning { background: var(--tb-warn-soft); color: var(--tb-warn); }
+/* 偵測到輸入提示（等待按 Enter）時的橫幅 */
+.enter-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  padding: 10px 12px; margin: 0; background: var(--tb-warn-soft); color: var(--tb-warn);
+  border: 1px solid var(--tb-warn); border-radius: var(--tb-radius-lg);
+}
+.enter-banner .tb-btn { flex: none; }
 .preview-command { padding: 8px; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--tb-surface-2); }
 .log-card { gap: 10px; }
 .log-search { align-items: end; }

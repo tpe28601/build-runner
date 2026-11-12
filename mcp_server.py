@@ -53,6 +53,8 @@ TOOLS = {
     ),
     "triage_job": tool("Get build result markers, root error and cascading errors.", JOB, ["jobId"]),
     "stop_job": tool("Stop a running build or cancel a queued build.", JOB, ["jobId"]),
+    "send_enter": tool("Press Enter once for a build stopped at an input prompt (username, password, or passphrase).",
+                       JOB, ["jobId"]),
     "list_history": tool("List recent build history, newest first.", {"limit": integer(1, 400)}),
 }
 
@@ -184,6 +186,16 @@ class Server:
 
     def stop_job(self, jobId):
         return jobs.stop(self.data, jobId)
+
+    def send_enter(self, jobId):
+        row = jobs.get_job(self.data, jobId)
+        if row["state"] != "running":
+            raise ToolError("JOB_NOT_RUNNING", "Job is not running.")
+        with jobs.process_token(row.get("pid") or 0) as token:
+            if not jobs.runner_matches(row, token):
+                raise ToolError("JOB_NOT_RUNNING", "Runner has already exited.")
+        jobs.request_enter(self.data, jobId)
+        return {"sent": True}
 
     def list_history(self, limit=20):
         return list(reversed(history.list_history(self.data)[-limit:]))

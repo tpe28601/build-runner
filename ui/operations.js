@@ -240,10 +240,11 @@ async function refreshOperationSettings() {
 }
 
 function renderSettings(settings) {
-  const { historyRetention: retention, notifications, ai } = settings;
+  const { historyRetention: retention, notifications, ai, autoSkipPrompts } = settings;
   $("retention-days").value = retention.days;
   $("retention-count").value = retention.count;
   for (const key of ["desktop", "title", "sound"]) $("notify-" + key).checked = notifications[key];
+  $("auto-skip-prompts").checked = autoSkipPrompts !== false;
   $("ai-default").value = ai.method;
   $("ai-timeout").value = ai.timeoutSec;
   $("ai-executable").value = ai.opencodePath;
@@ -287,6 +288,11 @@ listen($("notifications-form"), "submit", async () => {
   $("notify-desktop").checked = flags.desktop;
   if (!flags.title) stopTitleFlash();
   announce(denied ? "已儲存其他通知選項。瀏覽器未授權桌面通知。" : "已儲存通知設定。", denied);
+});
+
+listen($("prompts-form"), "submit", async () => {
+  await saveOperationSettings({ autoSkipPrompts: $("auto-skip-prompts").checked });
+  announce("已儲存互動提示設定。");
 });
 
 listen($("ai-settings-form"), "submit", async () => {

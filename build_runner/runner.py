@@ -7,7 +7,7 @@ import os
 import subprocess
 import time
 
-from . import artifacts, jobs, logtools, recipes, workspaces
+from . import artifacts, jobs, logtools, prompts, recipes, workspaces
 from .paths import data_dir, read_json
 
 
@@ -53,6 +53,133 @@ def contain_process_tree():
     # The non-inheritable handle stays open until the runner process exits.
 
 
+class EnterForwarder:
+    """Unblock build steps that stop on an interactive input prompt.
+
+    ``web_api`` drops an ``enter.request`` file in the job folder when the user
+    presses the Enter button, and this forwarder consumes it while waiting. The
+    runner also watches the log tail for known credential prompts (unless the
+    autoSkipPrompts setting is turned off) and presses Enter itself once the
+    output has clearly stalled on one.
+    """
+
+    POLL_SEC = 0.5
+    STALL_SEC = 1.5
+    COOLDOWN_SEC = 10.0
+    MAX_AUTO = 5
+    TAIL_BYTES = 4096
+
+    def __init__(self, log, log_path, request_path, *, auto_skip=True):
+        self.log = log
+        self.log_path = log_path
+        self.request_path = request_path
+        self.auto_skip = auto_skip
+        self.auto_sent = 0
+        self.last_auto = 0.0
+        self.auto_gave_up = False
+        self.prompt = False
+        self.stalled_at = 0.0
+        self.offset = None
+        self.reader = None
+
+    def wait(self, process, deadline):
+        """process.wait() that also answers input prompts until *deadline*."""
+        self.prompt = False
+        self.stalled_at = time.monotonic()
+        self.offset = None
+        try:
+            self.request_path.unlink()   # a request from a previous step must not leak
+        except OSError:
+            pass
+        try:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    code = process.poll()   # a step finishing exactly on the deadline still counts
+                    if code is not None:
+                        return code
+                    raise subprocess.TimeoutExpired(process.args, remaining)
+                try:
+                    return process.wait(timeout=min(self.POLL_SEC, remaining))
+                except subprocess.TimeoutExpired:
+                    pass
+                if self.request_path.exists():
+                    self.send(process, "manual")
+                else:
+                    self.watch(process)
+        finally:
+            if self.reader is not None:
+                try:
+                    self.reader.close()
+                except OSError:
+                    pass
+                self.reader = None
+            try:
+                process.stdin.close()
+            except OSError:
+                pass
+
+    def watch(self, process):
+        """Press Enter when the log tail sits on a known prompt with no growth."""
+        if not self.auto_skip or self.auto_gave_up:
+            return
+        try:
+            if self.reader is None:
+                # One shared read handle: seek(0, 2) reports the true EOF even
+                # while the step is writing, unlike stat() on the directory entry.
+                self.reader = self.log_path.open("rb")
+            size = self.reader.seek(0, 2)
+        except OSError:
+            return
+        if size != self.offset:
+            # The first sample (offset is None) lands here too: the step may
+            # already sit on a prompt written before the first poll tick.
+            start = max(0, size - self.TAIL_BYTES)
+            try:
+                self.reader.seek(start)
+                chunk = self.reader.read(size - start)
+            except OSError:
+                return
+            self.offset = size
+            self.stalled_at = time.monotonic()
+            self.prompt = prompts.ends_with_prompt(chunk.decode("utf-8", "replace"))
+            return
+        now = time.monotonic()
+        if not self.prompt or now - self.stalled_at < self.STALL_SEC or now - self.last_auto < self.COOLDOWN_SEC:
+            return
+        if self.auto_sent >= self.MAX_AUTO:
+            self.auto_gave_up = True
+            self.note("too many input prompts; automatic Enter disabled for this job")
+            return
+        self.auto_sent += 1
+        self.last_auto = now
+        self.send(process, "auto")
+
+    def send(self, process, source):
+        try:
+            self.request_path.unlink()
+        except OSError:
+            pass
+        try:
+            process.stdin.write(b"\r\n")
+            process.stdin.flush()
+        except OSError:
+            return   # the step already exited or no longer reads its input
+        if source == "manual":
+            self.note("Enter sent")
+        else:
+            self.note("input prompt detected, Enter sent automatically")
+
+    def note(self, text):
+        # Automatic sends happen while the step is blocked on input, so the note
+        # lands between its lines; a manual send can interleave with live output,
+        # but the single O_APPEND write never corrupts what the step wrote.
+        try:
+            self.log.write(("\n[Build Runner] " + text + "\n").encode("utf-8"))
+        except OSError:
+            pass
+
+
 def run(data, job_id):
     folder = jobs.job_dir(data, job_id)
     log_path = folder / "build.log"
@@ -67,12 +194,14 @@ def run(data, job_id):
     failure = None
     message = None
     contained = False
+    auto_skip = jobs.auto_skip_prompts(data)
     try:
         contain_process_tree()
         contained = True
         git = workspaces.git_state(plan["workspacePath"], include_dirty=False)
         row.update(branch=git["branch"], commit=git["commit"])
         with log_path.open("ab", buffering=0) as log:
+            forwarder = EnterForwarder(log, log_path, folder / "enter.request", auto_skip=auto_skip)
             for step in plan["steps"]:
                 command, executable, step_env = recipes.launch_args(step, env)
                 with jobs.lock(data):
@@ -81,10 +210,10 @@ def run(data, job_id):
                     jobs.save(data, row)
                     process = subprocess.Popen(
                         command, executable=executable, cwd=step["cwd"], env=step_env, shell=False,
-                        stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+                        stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT,
                     )
                 try:
-                    exit_code = process.wait(timeout=max(0, deadline - time.monotonic()))
+                    exit_code = forwarder.wait(process, deadline)
                 except subprocess.TimeoutExpired:
                     if process.poll() is None:
                         try:

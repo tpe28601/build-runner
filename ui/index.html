@@ -119,6 +119,7 @@
         <div class="tb-card log-card stack">
           <label class="tb-field"><span class="tb-field__label">Job</span><select id="log-job" class="tb-select"></select></label>
           <div id="triage" class="triage" hidden></div>
+          <div id="enter-banner" class="enter-banner" hidden><span>偵測到輸入提示，建置正在等待按 Enter。</span><button id="enter-send" class="tb-btn tb-btn--primary" type="button">按 Enter 繼續</button></div>
           <div class="row log-search">
             <label class="tb-field search-field"><span class="tb-field__label">關鍵字</span><input type="search" id="log-query" class="tb-input" placeholder="例如 C2065"></label>
             <div class="row filters" role="group" aria-label="Log 分類">
@@ -274,6 +275,12 @@
               <label class="check"><input id="notify-title" type="checkbox"><span>頁籤標題閃爍</span></label>
               <label class="check"><input id="notify-sound" type="checkbox"><span>播放提示音</span></label>
               <button type="submit" class="tb-btn">儲存通知設定</button>
+            </form>
+            <form id="prompts-form" class="tb-card stack">
+              <h2>互動提示</h2>
+              <p class="tb-muted">Build 停在帳號、密碼或 passphrase 提示時自動送 Enter 讓它略過；Log 頁的「按 Enter 繼續」與 Job 的「送 Enter」按鈕不受此設定影響。</p>
+              <label class="check"><input id="auto-skip-prompts" type="checkbox"><span>偵測到提示且輸出停止時自動送 Enter</span></label>
+              <button type="submit" class="tb-btn">儲存提示設定</button>
             </form>
           </div>
           <form id="ai-settings-form" class="tb-card stack">

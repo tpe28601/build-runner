@@ -175,6 +175,19 @@ def set_limit(data, value):
     return value
 
 
+def auto_skip_prompts(data):
+    """Whether runners should press Enter on known input prompts by themselves."""
+    try:
+        return bool(settings(data).get("autoSkipPrompts", True))
+    except ToolError:
+        return True
+
+
+def request_enter(data, job_id):
+    """Ask a running job's runner to send one Enter key to the build step."""
+    (job_dir(data, job_id) / "enter.request").write_text(now(), encoding="utf-8")
+
+
 def check_conflicts(data, path, common, force=False, *, rows=None):
     warnings = []
     key = workspaces.path_key(path)
