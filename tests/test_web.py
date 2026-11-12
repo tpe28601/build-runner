@@ -244,8 +244,10 @@ class WebTests(unittest.TestCase):
         linked = self.root / "Worktree sample"
         main.mkdir()
         for args in (("init", "-b", "sample-main"),
+                     # -c commit.gpgsign=false: a machine-wide commit.gpgsign
+                     # would open a passphrase dialog a test cannot answer.
                      ("-c", "user.name=Sample", "-c", "user.email=sample@example.invalid",
-                      "commit", "--allow-empty", "-m", "Sample"),
+                      "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "Sample"),
                      ("branch", "sample-other"),
                      ("worktree", "add", "--detach", str(linked))):
             result = subprocess.run(["git", "-C", str(main), *args], capture_output=True, timeout=10)

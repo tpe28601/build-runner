@@ -149,7 +149,10 @@ def git(path, *args, required=False, timeout=10):
             stdin=subprocess.DEVNULL, encoding="utf-8", errors="replace", timeout=timeout,
             env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
         )
-    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        # Broad on purpose: besides "no git installed", spawning can fail with
+        # transient OS errors (e.g. 0x800700E8 ERROR_NO_DATA when a pseudo
+        # console tears down) - workspace badges must degrade, jobs must not die.
         if required:
             raise ToolError("GIT_UNAVAILABLE", str(exc), 5) from exc
         return None

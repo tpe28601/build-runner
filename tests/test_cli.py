@@ -154,8 +154,11 @@ class BuildRunnerTests(unittest.TestCase):
         linked = self.root / "Linked sample"
         for args in (
             ("init",),
+            # commit.gpgsign=false: the machine's global config may enable GPG
+            # signing; a passphrase dialog inside a test run cannot be answered
+            # and pops OS errors instead.
             ("-c", "user.name=Sample", "-c", "user.email=sample@example.invalid",
-             "commit", "--allow-empty", "-m", "Sample"),
+             "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "Sample"),
             ("worktree", "add", "--detach", str(linked)),
         ):
             result = subprocess.run(["git", "-C", str(main), *args], capture_output=True, timeout=10)
