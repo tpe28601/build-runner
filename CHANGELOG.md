@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.1] - 2026-11-12
+
+### 新增
+
+- 送 Enter 改為雙通道：除了寫入 stdin pipe（`\r\n`），runner 也會 `AttachConsole` 附加到 build 步驟行程樹的主控台，以 `WriteConsoleInput` 注入 VK_RETURN。`getpass` 類提示（如 `Enter Your Username:`）直接從主控台讀字元、題目也不進 log，過去只有 pipe 通道會漏掉這種提示；現在任一通道送達即算成功。自動模式、手動「送 Enter」按鈕與 MCP `send_enter` 都走同一雙通道。
+
+### 修正
+
+- 跑測試時偶爾彈出「啟動 `git -C ... log -1 ...` 時發生錯誤 0x800700E8」：機器 global git config 啟用 GPG 簽章（`commit.gpgsign=true`）時，測試裡的裸 `git commit` 會觸發 gpg→pinentry 密碼對話框，無人應答導致簽章失敗並在 OS 層彈訊。測試建倉庫的 commit 一律加 `-c commit.gpgsign=false`，不再依賴執行環境的 git 設定。
+- `workspaces.git()` 容錯放寬：git 行程啟動階段的任何 OS 錯誤（不再只有找不到 git）都降級為「無 git 資訊」， Workspace 徽章缺資料但不會拖垮整個 Job。
+
 ## [0.4.0] - 2026-11-12
 
 ### 新增
