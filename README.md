@@ -21,7 +21,7 @@
 - 在 **流程設定 → 參數表與 preset** 匯入 Markdown、CSV、XLSX 或 JSON。設定 Recipe 使用該表後，可在 Build 頁分組搜尋、選取參數、套用 preset 並即時預覽指令。Markdown 的限制備註可另設為互斥規則。
 - 在 **流程設定 → 產出物** 設定 glob、排除項、改名範本、目的地與 ZIP。手動整理會先顯示預覽。要在 build 成功後自動整理，將規則組連結到 Recipe。同名檔案會加序號。
 - 在 **設定** 管理每日或每週的 Windows 工作排程、通知與歷史保留。排程使用 Windows 的本機時間，透過 CLI 執行，即使 Web 或 Hub 已關閉也可建置。
-- 在 **Log** 可複製 AI 提示詞，或將選定 Job 的相關 log 送往已設定的 OpenCode 或相容端點。在 Windows 使用 OpenCode 時，請設定 `.exe` 的絕對路徑。
+- AI 分析預設關閉，先在 **設定 → AI 分析設定** 開啟「啟用 AI 分析功能」。開啟後在 **Log** 可複製 AI 提示詞，或將選定 Job 的相關 log 送往已設定的 OpenCode 或相容端點。在 Windows 使用 OpenCode 時，請設定 `.exe` 的絕對路徑。
 
 ## CLI 範例
 

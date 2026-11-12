@@ -19,7 +19,7 @@ const pageHelp = {
   log: ["Log", [
     "選取 Job 後會自動讀取新增輸出。關閉「追蹤最新輸出」可停在目前位置。要存檔時按「下載 .log」。",
     "搜尋關鍵字或選擇 error、fail、warning。使用上一筆／下一筆，或點判讀摘要跳到該行。",
-    "Job 結束後可複製 AI 提示詞，或送到已設定的 OpenCode／自訂端點。可选择提示詞帶入的 log 範圍（錯誤附近、尾端、完整或自訂起訖行），「預覽提示詞」可先檢查內容。",
+    "Job 結束後可複製 AI 提示詞，或送到已設定的 OpenCode／自訂端點（AI 分析預設關閉，先在設定頁開啟「啟用 AI 分析功能」）。可选择提示詞帶入的 log 範圍（錯誤附近、尾端、完整或自訂起訖行），「預覽提示詞」可先檢查內容。",
   ]],
   history: ["歷史", [
     "可依 Workspace、結果及完成日期篩選紀錄。",
@@ -34,7 +34,7 @@ const pageHelp = {
   settings: ["設定", [
     "歷史保留可依天數或筆數清理，填 0 停用該條件。",
     "可開啟瀏覽器通知、頁籤標題閃爍或提示音。桌面通知需要瀏覽器授權。",
-    "在 AI 分析設定選擇預設方式和提示詞範本。工作排程支援每日或每週，可啟用、停用或刪除。",
+    "AI 分析預設關閉：先在「AI 分析設定」開啟「啟用 AI 分析功能」，再選擇預設方式和提示詞範本。工作排程支援每日或每週，可啟用、停用或刪除。",
   ]],
 };
 
@@ -76,6 +76,7 @@ function initializeOperations() {
   }
   refreshOperationSettings().then(() => {
     if (!$("log-job").value) $("ai-method").value = operationSettings.ai.method;
+    applyAiVisibility();
     updateAnalysisActions();
   }).catch((error) => announce(error.message, true));
   document.addEventListener("pointerdown", prepareAudio, { once: true });
@@ -245,6 +246,7 @@ function renderSettings(settings) {
   $("retention-count").value = retention.count;
   for (const key of ["desktop", "title", "sound"]) $("notify-" + key).checked = notifications[key];
   $("auto-skip-prompts").checked = autoSkipPrompts !== false;
+  $("ai-enabled").checked = ai.enabled === true;
   $("ai-default").value = ai.method;
   $("ai-timeout").value = ai.timeoutSec;
   $("ai-executable").value = ai.opencodePath;
@@ -261,6 +263,13 @@ async function saveOperationSettings(body) {
   const { result } = await api("/settings", "POST", body);
   operationSettings = result;
   return result;
+}
+
+// The AI feature ships disabled: hide every analysis entry point until the
+// settings switch is on (the API refuses POST /ai in the same situation).
+function applyAiVisibility() {
+  const enabled = operationSettings.ai?.enabled === true;
+  $("ai-panel").hidden = !enabled;
 }
 
 listen($("retention-form"), "submit", async () => {
@@ -297,12 +306,14 @@ listen($("prompts-form"), "submit", async () => {
 
 listen($("ai-settings-form"), "submit", async () => {
   const ai = {
+    enabled: $("ai-enabled").checked,
     method: $("ai-default").value, timeoutSec: Number($("ai-timeout").value),
     opencodePath: $("ai-executable").value.trim(), opencodeArgs: parseJson($("ai-args").value || "[]", "OpenCode 參數"),
     baseUrl: $("ai-base").value.trim(), model: $("ai-model").value.trim(), apiKey: $("ai-key").value,
     clearApiKey: $("ai-clear-key").checked, template: $("ai-template").value,
   };
   const { ai: saved } = await saveOperationSettings({ ai });
+  applyAiVisibility();
   $("ai-key").value = "";
   $("ai-clear-key").checked = false;
   $("ai-key-state").textContent = saved.hasApiKey ? "已儲存 ••••••••，留空可保留。" : "尚未設定，可依端點需求填寫。";

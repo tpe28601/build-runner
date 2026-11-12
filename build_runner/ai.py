@@ -32,17 +32,23 @@ def configure(current, changes):
     if not isinstance(changes, dict):
         raise ToolError("INVALID_AI_SETTINGS", "AI settings must be an object.")
     config = {
+        # The analysis feature ships switched off; the settings page owns the
+        # toggle and the web API refuses POST /ai while it stays disabled.
+        "enabled": False,
         "method": "copy", "template": DEFAULT_TEMPLATE, "timeoutSec": 120,
         "opencodePath": "", "opencodeArgs": [], "baseUrl": "", "model": "", "apiKey": "",
         **current,
     }
-    for field in ("method", "template", "timeoutSec", "opencodePath", "opencodeArgs", "baseUrl", "model"):
+    for field in ("enabled", "method", "template", "timeoutSec", "opencodePath", "opencodeArgs",
+                  "baseUrl", "model"):
         if field in changes:
             config[field] = changes[field]
     if changes.get("clearApiKey") is True:
         config["apiKey"] = ""
     elif changes.get("apiKey"):
         config["apiKey"] = changes["apiKey"]
+    if type(config["enabled"]) is not bool:
+        raise ToolError("INVALID_AI_SETTINGS", "The AI enable flag must be a boolean.")
     if config["method"] not in METHODS or type(config["timeoutSec"]) is not int or not 1 <= config["timeoutSec"] <= 900:
         raise ToolError("INVALID_AI_SETTINGS", "Choose a method and a timeout between 1 and 900 seconds.")
     for field in ("opencodePath", "baseUrl", "model", "apiKey", "template"):

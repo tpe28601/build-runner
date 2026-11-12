@@ -108,7 +108,7 @@ Dev-Toolbox 第四個工具：管理多個程式碼資料夾、用可自訂的�
 - 編碼：依序試 UTF-8 → UTF-16（有 BOM 時）→ cp950，無法解碼的字元用替代字元。
 - 快速搜尋按鈕：`error`、`fail`、`warning`，加上自訂關鍵字；顯示筆數，可上一筆／下一筆跳轉，命中處高亮。
 - 自動判讀（沿用 build-log-triage 的規則）：判斷 `- Done -`／`- Failed -`、找第一個根本錯誤（compile／link 優先）、把 `NMAKE U1077`、`error 7000` 歸為連鎖錯誤。結果顯示在 log 上方，點一下跳到該行。
-- 「AI 分析」：把判讀結果＋選定的 log 範圍（加上 Workspace、branch、指令）組成提示詞，提示詞範本可在設定裡修改。log 範圍下拉：錯誤附近 ±40 行（預設）／尾端 200 行／完整 log（取檔尾，超過時開頭加省略提示）／自訂起訖行號（上限 20000 行）。「預覽提示詞」以 `POST /api/jobs/<id>/ai` 帶 `preview: true` 取回提示詞內容但不送出分析。三種送法，設定裡選預設、按鈕旁的下拉可臨時切換：
+- 「AI 分析」：**功能預設關閉**，設定頁「AI 分析設定」的「啟用 AI 分析功能」開關打開後，Log 頁與歷史頁的分析入口才顯示；關閉時 `POST /api/jobs/<id>/ai` 回 409 `AI_DISABLED`（包含預覽與複製）；讀取已儲存結果的 GET API 不受影響（畫面上要等開關重開才看得到入口），進行中的分析不會因關閉而中止。把判讀結果＋選定的 log 範圍（加上 Workspace、branch、指令）組成提示詞，提示詞範本可在設定裡修改。log 範圍下拉：錯誤附近 ±40 行（預設）／尾端 200 行／完整 log（取檔尾，超過時開頭加省略提示）／自訂起訖行號（上限 20000 行）。「預覽提示詞」以 `POST /api/jobs/<id>/ai` 帶 `preview: true` 取回提示詞內容但不送出分析。三種送法，設定裡選預設、按鈕旁的下拉可臨時切換：
   1. **OpenCode**：在該 Workspace 資料夾執行 `opencode run <提示詞>`（opencode 執行檔路徑、要帶的 `--model`／`--agent` 等參數可在設定填），輸出顯示在面板。長提示詞先寫到暫存檔，避免超過命令列長度。
   2. **自訂端點**：OpenAI 相容 API（例如 LiteLLM），設定 base URL、model、API key（key 存在使用者資料夾，畫面上遮罩顯示），用 `/v1/chat/completions` 送出並顯示回答。
   3. **複製提示詞**：只複製到剪貼簿，讓使用者自己貼到任何 AI。
@@ -212,12 +212,12 @@ exit code 照 TOOL-SPEC（0 成功、1 失敗、3 參數錯、4 取消、5 環�
 | `GET /api/jobs`、`GET /api/jobs/<id>` | 列表／狀態 |
 | `GET /api/jobs/<id>/log?from=<offset>` | 增量 log；`?download=1` 下載 `.log` 檔 |
 | `GET /api/jobs/<id>/search?q=&kind=error|fail|warning` | 搜尋 |
-| `GET /api/jobs/<id>/triage`、`POST /api/jobs/<id>/ai` | 判讀／AI 分析（ai POST 可帶 `logScope`/`logStart`/`logEnd`，`preview: true` 只回提示詞） |
+| `GET /api/jobs/<id>/triage`、`POST /api/jobs/<id>/ai` | 判讀／AI 分析（ai POST 可帶 `logScope`/`logStart`/`logEnd`，`preview: true` 只回提示詞；AI 功能開關關閉時 POST 回 409 `AI_DISABLED`） |
 | `POST /api/jobs/<id>/stop` | 停止 |
 | `POST /api/jobs/<id>/enter` | 對執行中 Job 送一次 Enter（非執行中回 409，不需 confirm） |
 | `GET /api/history`、`POST /api/history/export`、`POST /api/history/delete` | 歷史（delete 要 `confirm: true`） |
 | `GET/POST/DELETE /api/schedules` | 排程 |
-| `GET/POST /api/settings` | 設定（同時數量、互動提示自動送 Enter、AI 送法與端點、提示詞範本、通知、保留天數） |
+| `GET/POST /api/settings` | 設定（同時數量、互動提示自動送 Enter、AI 功能開關與送法端點、提示詞範本、通知、保留天數） |
 
 安全規則全部照 TOOL-SPEC 第 5 節（Host 檢查、`X-Toolbox-Request`、Origin、CSP、白名單靜態檔、body 上限）。
 TOOL-SPEC 寫「同一時間只允許一個會寫入的工作」：本工具的 build Job 例外，改由上面的衝突檢查管理；設定檔寫入仍要加鎖。
@@ -229,10 +229,10 @@ TOOL-SPEC 寫「同一時間只允許一個會寫入的工作」：本工具的 
 | 總覽 | 正在跑／排隊的 Job 卡片（進度、步驟、耗時、停止鈕），最近結果 |
 | Workspace | 資料夾清單、git 狀態、新增／匯入 worktree、勾選後「開始 build」 |
 | Build | 選 Workspace（多選）＋ Recipe ＋ 參數（分組勾選＋說明＋搜尋＋指令預覽）→ 衝突檢查 → 開始 |
-| Log | 選 Job，即時 log、error／fail／warning 快速搜尋、判讀摘要、AI 分析、偵測到輸入提示時顯示「按 Enter 繼續」 |
+| Log | 選 Job，即時 log、error／fail／warning 快速搜尋、判讀摘要、AI 分析（功能開關關閉時隱藏）、偵測到輸入提示時顯示「按 Enter 繼續」 |
 | 流程設定 | Recipe、參數表匯入、preset、產出物規則（含預覽） |
 | 歷史 | 表格、篩選、匯出、勾選刪除 |
-| 設定 | 同時數量、互動提示（autoSkipPrompts）、AI 送法（OpenCode／自訂端點／複製）、通知、排程、保留規則 |
+| 設定 | 同時數量、互動提示（autoSkipPrompts）、AI（功能開關預設關、送法 OpenCode／自訂端點／複製）、通知、排程、保留規則 |
 
 圖標用 Lucide（`tb-icons.js`），顏色只用 `--tb-*` token，支援 `?embedded=1`，400px 寬不破版。
 

@@ -511,7 +511,9 @@ async function loadHistory() {
     root.textContent = rootText;
     if (rootText !== "—") root.title = rootText;
     const actions = element("div", "row");
-    actions.append(button("查看 Log", () => openLog(row.id)), button("AI 分析", () => openSavedAnalysis(row.id)));
+    const aiButton = button("AI 分析", () => openSavedAnalysis(row.id));
+    aiButton.hidden = operationSettings.ai?.enabled !== true;   // hidden while the feature switch is off
+    actions.append(button("查看 Log", () => openLog(row.id)), aiButton);
     record.insertCell().append(actions);
   }
   wrap.append(table);
@@ -775,6 +777,7 @@ for (const [id, direction] of [["previous", -1], ["next", 1]]) listen($(id), "cl
 });
 
 async function navigate() {
+  window.applyAiVisibility?.();   // keep the analysis panel in step with the feature switch
   const hash = location.hash.slice(1);
   page = pages.includes(hash) ? hash : "overview";
   const current = ++navigation;

@@ -159,6 +159,8 @@ class WebTests(unittest.TestCase):
         self.assertEqual(headers["Content-Type"], "application/octet-stream")
         self.assertEqual(headers["Content-Disposition"],
                          f'attachment; filename="PlatformA-feature-x-{job_id[:8]}.log"')
+        self.api("POST", "/api/settings", {"ai": {"enabled": True}})
+        self.addCleanup(self.api, "POST", "/api/settings", {"ai": {"enabled": False}})
         prompt = self.api("POST", f"/api/jobs/{job_id}/ai",
                           {"method": "copy", "preview": True, "logScope": "range",
                            "logStart": 2, "logEnd": 4})["result"]["prompt"]
@@ -171,6 +173,36 @@ class WebTests(unittest.TestCase):
                                                     "logScope": "everywhere"}, code=400)
         self.api("POST", f"/api/jobs/{job_id}/ai", {"method": "copy", "preview": True,
                                                     "logScope": "range", "logStart": "2"}, code=400)
+
+    def test_ai_analysis_requires_the_settings_switch(self):
+        job_id = "c" * 32
+        folder = self.data / "jobs" / job_id
+        folder.mkdir(parents=True)
+        (folder / "status.json").write_text(json.dumps(
+            {"id": job_id, "workspace": "PlatformA", "branch": "main", "state": "failed",
+             "argv": ["builda.bat", "-r"], "queuedAt": "2026-11-01T00:00:00+00:00",
+             "startedAt": "2026-11-01T00:00:01+00:00", "endedAt": "2026-11-01T00:10:00+00:00",
+             "exitCode": 1}), encoding="utf-8")
+        (folder / "build.log").write_text("boom\n", encoding="utf-8")
+        # Ships disabled: analysis requests, previews included, are refused.
+        self.assertIs(self.api("GET", "/api/settings")["result"]["ai"]["enabled"], False)
+        for payload in ({"method": "copy"}, {"method": "copy", "preview": True}):
+            self.assertEqual(self.api("POST", f"/api/jobs/{job_id}/ai", payload, code=409)["error"]["code"],
+                             "AI_DISABLED")
+        # The switch turns the feature on and back off.
+        self.assertIs(self.api("POST", "/api/settings", {"ai": {"enabled": True}})["result"]["ai"]["enabled"], True)
+        self.assertIn("boom", self.api("POST", f"/api/jobs/{job_id}/ai",
+                                       {"method": "copy", "preview": True})["result"]["prompt"])
+        # Unrelated AI fields (API key edits) must leave the enable flag alone.
+        self.assertIs(self.api("POST", "/api/settings", {"ai": {"apiKey": "sample"}})["result"]["ai"]["enabled"], True)
+        self.assertIs(self.api("POST", "/api/settings", {"ai": {"clearApiKey": True}})["result"]["ai"]["enabled"], True)
+        self.assertIs(self.api("POST", "/api/settings", {"ai": {"enabled": False}})["result"]["ai"]["enabled"], False)
+        self.api("POST", f"/api/jobs/{job_id}/ai", {"method": "copy", "preview": True}, code=409)
+        # Reading stored analyses keeps working while disabled; the flag must be a boolean.
+        self.assertEqual(self.api("GET", f"/api/jobs/{job_id}/ai")["result"], [])
+        self.assertIsNone(self.api("GET", f"/api/jobs/{job_id}/ai?active=1")["result"])
+        self.assertEqual(self.api("POST", "/api/settings", {"ai": {"enabled": "yes"}}, code=400)["error"]["code"],
+                         "INVALID_AI_SETTINGS")
 
     def test_enter_button_requires_running_job(self):
         running = "e" * 32

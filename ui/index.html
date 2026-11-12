@@ -141,7 +141,7 @@
           <div id="log-output" class="log-output" tabindex="0" role="region" aria-label="Build log"><div id="live-lines"></div><div id="archive-lines" hidden></div></div>
           <p id="log-footer" class="tb-small tb-muted">選擇 Job 即可查看輸出。</p>
         </div>
-        <div class="tb-card stack operation-card" id="ai-panel">
+        <div class="tb-card stack operation-card" id="ai-panel" hidden>
           <div><h2>AI 分析</h2><p class="tb-muted">提示詞會包含 Workspace、指令、判讀結果及相關 log。</p></div>
           <div class="row">
             <label class="tb-field search-field"><span class="tb-field__label">分析方式</span>
@@ -285,6 +285,7 @@
           </div>
           <form id="ai-settings-form" class="tb-card stack">
             <h2>AI 分析設定</h2>
+            <label class="check"><input id="ai-enabled" type="checkbox"><span>啟用 AI 分析功能（預設關閉；關閉時隱藏 Log 頁與歷史頁的分析入口，API 也會拒絕分析請求）</span></label>
             <div class="editor-fields">
               <label class="tb-field"><span class="tb-field__label">預設分析方式</span><select id="ai-default" class="tb-select"><option value="copy">複製提示詞</option><option value="opencode">OpenCode</option><option value="endpoint">自訂端點</option></select></label>
               <label class="tb-field"><span class="tb-field__label">逾時秒數</span><input id="ai-timeout" type="number" class="tb-input" min="1" max="900" required></label>

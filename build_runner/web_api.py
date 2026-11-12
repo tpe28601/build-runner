@@ -615,11 +615,13 @@ class Api:
                     return ok({"file": name, "answer": file.read_text(encoding="utf-8")})
                 return ok(sorted((file.name for file in folder.glob("ai-*.md") if ai.ANSWER.fullmatch(file.name)), reverse=True))
             if method == "POST":
+                config = ai.configure(jobs.settings(self.data).get("ai", {}), {})
+                if not config["enabled"]:
+                    raise HttpError(409, "AI_DISABLED", "AI 分析功能目前是關閉的，請先在設定頁開啟。")
                 if row["state"] in jobs.ACTIVE:
                     raise HttpError(409, "JOB_BUSY", "請等候建置結束後再分析。")
                 if not path.is_file():
                     raise HttpError(404, "LOG_NOT_FOUND", "找不到建置 log。")
-                config = ai.configure(jobs.settings(self.data).get("ai", {}), {})
                 selected = body.get("method", config["method"])
                 if selected not in ai.METHODS:
                     raise HttpError(400, "INVALID_AI_METHOD", "請選擇有效的 AI 分析方式。")
