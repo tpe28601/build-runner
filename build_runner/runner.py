@@ -7,7 +7,7 @@ import os
 import subprocess
 import time
 
-from . import artifacts, jobs, logtools, prompts, recipes, workspaces
+from . import artifacts, console, jobs, logtools, prompts, recipes, workspaces
 from .paths import data_dir, read_json
 
 
@@ -156,11 +156,24 @@ class EnterForwarder:
         self.send(process, "auto")
 
     def send(self, process, source):
+        # Two channels, because prompts read input two different ways: the pipe
+        # reaches stdin (input(), fgets), WriteConsoleInput reaches raw key reads
+        # (getpass, msvcrt.getwch, ReadConsole) through the console the step's
+        # process tree owns. Trade-off accepted for skip-every-prompt mode: a
+        # key the current prompt ignores stays queued and may answer the next
+        # console read (e.g. a trailing "pause"); the next injection flushes
+        # leftovers first, and MAX_AUTO bounds the total.
+        delivered = False
         try:
             process.stdin.write(b"\r\n")
             process.stdin.flush()
+            delivered = True
         except OSError:
-            return   # the step already exited; the leftover request is cleared at the next step start
+            pass   # the step exited or never reads its pipe; the console may still take the key
+        if console.inject_enter(process.pid):
+            delivered = True
+        if not delivered:
+            return   # nothing accepted the Enter; the leftover request is cleared at the next step start
         try:
             self.request_path.unlink()   # only after success: a failed send must not swallow the request
         except OSError:

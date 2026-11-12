@@ -55,8 +55,15 @@ class EnterForwarderTests(unittest.TestCase):
         return forwarder
 
     def child(self, code, log):
+        # CREATE_NEW_CONSOLE (hidden) mirrors production, where every step owns
+        # its console; sharing the test runner's console would let one test's
+        # injected keys answer a later test's getpass. stdio stays redirected.
+        info = subprocess.STARTUPINFO()
+        info.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        info.wShowWindow = 0
         return subprocess.Popen([sys.executable, "-c", code], cwd=str(self.log_path.parent),
-                                stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT)
+                                stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT,
+                                creationflags=subprocess.CREATE_NEW_CONSOLE, startupinfo=info)
 
     def test_auto_sends_enter_when_output_stalls_on_prompt(self):
         forwarder = self.forwarder()
@@ -171,6 +178,31 @@ class EnterForwarderTests(unittest.TestCase):
         self.assertIn("ALL CLEAR", text)
         self.assertEqual(text.count("Enter sent automatically"), 3)
         self.assertLess(elapsed, 12)   # ~3 x (startup + STALL 1.5s + COOLDOWN 2s), not ~35s
+
+    def test_credsupport_chain_clears_username_and_both_getpass_prompts(self):
+        # The real builda.bat credential flow (credSupport.GetCredFileForUser):
+        # input() reads the stdin pipe, but getpass reads raw console keys whose
+        # prompt never reaches the log. The dual-channel send must clear all
+        # three; the log tail sits on the Username line the whole time.
+        forwarder = self.forwarder()
+        del forwarder.POLL_SEC, forwarder.STALL_SEC, forwarder.COOLDOWN_SEC   # class defaults
+        process = self.child(
+            "import getpass\n"
+            "u = input('Enter Your Username: ')\n"
+            "pw = getpass.getpass('Enter password for https://git.corp/x.git:')\n"
+            "ph = getpass.getpass('Enter passphrase for key (enter to skip):')\n"
+            "print('CHAIN DONE user=%r pw_len=%d ph_len=%d' % (u, len(pw), len(ph)))",
+            forwarder.log,
+        )
+        self.addCleanup(lambda: (process.kill(), process.wait()) if process.poll() is None else None)
+        started = time.monotonic()
+        self.assertEqual(forwarder.wait(process, time.monotonic() + 40), 0)
+        elapsed = time.monotonic() - started
+        text = self.log_path.read_text(encoding="utf-8", errors="replace")
+        self.assertIn("CHAIN DONE user='' pw_len=0 ph_len=0", text)   # all three skipped empty
+        sent = text.count("Enter sent automatically")
+        self.assertIn(sent, (2, 3))   # one per channel race at worst; never the MAX_AUTO give-up
+        self.assertLess(elapsed, 20)
 
 
 if __name__ == "__main__":
