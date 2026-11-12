@@ -65,7 +65,7 @@ class EnterForwarder:
 
     POLL_SEC = 0.5
     STALL_SEC = 1.5
-    COOLDOWN_SEC = 10.0
+    COOLDOWN_SEC = 2.0   # username/password/passphrase prompts often arrive back to back
     MAX_AUTO = 5
     TAIL_BYTES = 4096
 
@@ -157,14 +157,14 @@ class EnterForwarder:
 
     def send(self, process, source):
         try:
-            self.request_path.unlink()
-        except OSError:
-            pass
-        try:
             process.stdin.write(b"\r\n")
             process.stdin.flush()
         except OSError:
-            return   # the step already exited or no longer reads its input
+            return   # the step already exited; the leftover request is cleared at the next step start
+        try:
+            self.request_path.unlink()   # only after success: a failed send must not swallow the request
+        except OSError:
+            pass
         if source == "manual":
             self.note("Enter sent")
         else:

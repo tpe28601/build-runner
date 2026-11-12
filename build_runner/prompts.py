@@ -10,7 +10,12 @@ PROMPT = re.compile(r"\benter (?:your username|password for|passphrase for)\b", 
 
 def ends_with_prompt(text):
     """True when the end of *text* is an input prompt waiting for a key press."""
-    tail = text[-4096:].rstrip()
-    if not tail:
-        return False
-    return bool(PROMPT.search(tail.rsplit("\n", 1)[-1].rstrip("\r")))
+    # Scan back over blank lines and this tool's own notes: a note can land on
+    # top of the step's newest prompt (both append to the same log), and a
+    # prompt can also follow every note once the step re-asks.
+    for line in reversed(text[-4096:].splitlines()):
+        line = line.strip()
+        if not line or line.startswith("[Build Runner]"):
+            continue
+        return bool(PROMPT.search(line))
+    return False

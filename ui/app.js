@@ -144,8 +144,15 @@ function announce(text, error = false, pending = false) {
 }
 
 function promptAtTail(text) {
-  const tail = (text || "").slice(-4096).replace(/\s+$/, "");
-  return !!tail && PROMPT_PATTERN.test(tail.slice(tail.lastIndexOf("\n") + 1));
+  // 與後端 prompts.py 相同的規則：向後跳過空行與本工具自加的 [Build Runner]
+  // 記號行（記號可能蓋在最新提示之上），比對步骤真正的最後一行。
+  const lines = (text || "").slice(-4096).split("\n");
+  for (let i = lines.length - 1; i >= 0; --i) {
+    const line = lines[i].trim();
+    if (!line || line.startsWith("[Build Runner]")) continue;
+    return PROMPT_PATTERN.test(line);
+  }
+  return false;
 }
 
 function badge(state) {

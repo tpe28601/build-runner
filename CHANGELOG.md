@@ -5,7 +5,7 @@
 ### 新增
 
 - 互動提示送 Enter：Build 停在 `Enter Your Username:`、`Enter password for ...:`、`Enter passphrase for ... (enter to skip):` 時不再卡死。
-  - 自動模式（預設開）：runner 偵測到 log 尾端停在上述提示且輸出停止 1.5 秒後自動送 Enter（寫入 `\r\n` 讓工具以空回答略過）；每 Job 上限 5 次、冷卻 10 秒，超過放棄並在 log 記錄 `too many input prompts`。設定頁「互動提示」可關閉。
+  - 自動模式（預設開）：runner 偵測到 log 尾端停在上述提示且輸出停止 1.5 秒後自動送 Enter（寫入 `\r\n` 讓工具以空回答略過）；每 Job 上限 5 次、冷卻 2 秒（連續提示可在數秒內全數放行），超過放棄並在 log 記錄 `too many input prompts`。設定頁「互動提示」可關閉。
   - 手動模式：執行中 Job 的卡片新增「送 Enter」按鈕，log 頁偵測到提示時顯示橫幅與「按 Enter 繼續」按鈕；不受自動開關影響。
   - MCP 新增 `send_enter` 工具；API 為 `POST /api/jobs/<id>/enter`（非執行中回傳 409）。
 - 設定 API 新增 `autoSkipPrompts`（布林，預設 true）；非布林值回傳 400 `INVALID_PROMPT_SETTING`。

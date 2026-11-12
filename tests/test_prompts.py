@@ -21,8 +21,17 @@ class PromptDetectTests(unittest.TestCase):
         self.assertFalse(ends_with_prompt(""))
         self.assertFalse(ends_with_prompt("   \r\n"))
         self.assertFalse(ends_with_prompt("link x.obj\nBuild completed.\n"))
-        # The prompt was answered already, so the step is not waiting.
+        # The prompt was answered and the step moved on, so it is not waiting.
         self.assertFalse(ends_with_prompt("Enter Your Username: service\ncontinuing...\n"))
+
+    def test_own_notes_do_not_hide_a_prompt(self):
+        # The note can append on top of the newest prompt; the step's real last
+        # line still decides. A prompt under the notes stays "waiting", which is
+        # correct: another Enter is what a re-ask needs.
+        self.assertTrue(ends_with_prompt("Enter Your Username: \n\n[Build Runner] Enter sent\n"))
+        self.assertTrue(ends_with_prompt("Enter password for x:\n[Build Runner] note\n"))
+        self.assertFalse(ends_with_prompt("Enter Your Username: \n[Build Runner] Enter sent\nnext step runs\n"))
+        self.assertFalse(ends_with_prompt("[Build Runner] Enter sent\n\n[Build Runner] other note\n"))
 
 
 class EnterForwarderTests(unittest.TestCase):
@@ -65,16 +74,31 @@ class EnterForwarderTests(unittest.TestCase):
 
     def test_manual_request_is_consumed_and_forwarded(self):
         forwarder = self.forwarder(auto_skip=False)
+        ready = self.log_path.parent / "child.ready"
         process = self.child(
-            "import sys; sys.stdout.write('GOT' + repr(sys.stdin.readline())); sys.stdout.flush()",
+            "import sys; from pathlib import Path; Path('child.ready').touch(); "
+            "sys.stdout.write('GOT' + repr(sys.stdin.readline())); sys.stdout.flush()",
             forwarder.log,
         )
         self.addCleanup(lambda: (process.kill(), process.wait()) if process.poll() is None else None)
-        # The request lands after wait() starts (stale files are cleared at step start).
-        timer = threading.Timer(0.4, lambda: self.request.write_text("manual", encoding="utf-8"))
-        timer.start()
-        self.addCleanup(timer.cancel)
-        self.assertEqual(forwarder.wait(process, time.monotonic() + 15), 0)
+        # wait() clears a stale request at step start, so the request must land
+        # while wait() is already polling and the child is certainly still reading.
+        outcome = {}
+
+        def run():
+            try:
+                outcome["code"] = forwarder.wait(process, time.monotonic() + 15)
+            except subprocess.TimeoutExpired:
+                outcome["code"] = "timeout"
+
+        worker = threading.Thread(target=run)
+        worker.start()
+        deadline = time.monotonic() + 10
+        while not ready.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.request.write_text("manual", encoding="utf-8")
+        worker.join(20)
+        self.assertEqual(outcome.get("code"), 0)
         text = self.log_path.read_text(encoding="utf-8", errors="replace")
         self.assertIn("GOT'\\n'", text)
         self.assertIn("Enter sent", text)
@@ -125,6 +149,28 @@ class EnterForwarderTests(unittest.TestCase):
         self.assertEqual(text.count("Enter sent automatically"), forwarder.MAX_AUTO)
         self.assertIn("too many input prompts", text)
         self.assertNotIn("ALL SKIPPED", text)   # the 6th prompt stays waiting; the user takes over
+
+    def test_three_prompts_back_to_back_clear_in_seconds(self):
+        # Real pacing (default constants): username, password, passphrase in a row
+        # must all be skipped quickly, not one per COOLDOWN_SEC of 10.
+        forwarder = self.forwarder()
+        del forwarder.POLL_SEC, forwarder.STALL_SEC, forwarder.COOLDOWN_SEC   # class defaults
+        process = self.child(
+            "import sys\n"
+            "for prompt in ('Enter Your Username: ', 'Enter password for https://git.corp/x.git:',\n"
+            "                'Enter passphrase for key (enter to skip):'):\n"
+            "    sys.stdout.write(prompt); sys.stdout.flush(); sys.stdin.readline()\n"
+            "sys.stdout.write('ALL CLEAR\\n'); sys.stdout.flush()",
+            forwarder.log,
+        )
+        self.addCleanup(lambda: (process.kill(), process.wait()) if process.poll() is None else None)
+        started = time.monotonic()
+        self.assertEqual(forwarder.wait(process, time.monotonic() + 30), 0)
+        elapsed = time.monotonic() - started
+        text = self.log_path.read_text(encoding="utf-8", errors="replace")
+        self.assertIn("ALL CLEAR", text)
+        self.assertEqual(text.count("Enter sent automatically"), 3)
+        self.assertLess(elapsed, 12)   # ~3 x (startup + STALL 1.5s + COOLDOWN 2s), not ~35s
 
 
 if __name__ == "__main__":
