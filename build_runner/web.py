@@ -21,6 +21,7 @@ if not __package__:
 from build_runner import jobs
 from build_runner.paths import ROOT, ToolError, data_dir, read_json
 from build_runner.web_api import Api, Download, HttpError
+from standalone_update import handle_update
 
 MAX_BODY = 1024 * 1024
 STATIC_FILES = {
@@ -35,6 +36,7 @@ STATIC_FILES = {
     "/tb-theme.js": ("tb-theme.js", "text/javascript"),
     "/tb-icons.js": ("tb-icons.js", "text/javascript"),
     "/tb-dirpicker.js": ("tb-dirpicker.js", "text/javascript"),
+    "/tb-standalone-update.js": ("tb-standalone-update.js", "text/javascript"),
 }
 
 
@@ -206,6 +208,11 @@ class Handler(BaseHTTPRequestHandler):
                 raise HttpError(400, "INVALID_BODY_LENGTH", "GET 與 HEAD 不接受請求本體。")
             body = self.read_body() if method != "GET" else {}
             path, _, raw_query = self.path.partition("?")
+            if method == "POST" and path == "/api/standalone-update":
+                if self.server.managed:
+                    raise HttpError(403, "MANAGED_BY_HUB", "請從 Hub 更新工具。")
+                self.send_json(200, handle_update(ROOT, body))
+                return
             if method == "GET" and path in STATIC_FILES:
                 name, content_type = STATIC_FILES[path]
                 self.send_bytes(200, f"{content_type}; charset=utf-8", (ROOT / "ui" / name).read_bytes())
@@ -314,6 +321,7 @@ def main(argv=None):
         print(str(exc), file=sys.stderr)
         return getattr(exc, "exit_code", 1)
     with server:
+        server.managed = bool(args.parent_pid)
         server.hub_origins = loopback_origins(hub_port)
         server.api = Api(data, manifest, server)
         url = f"http://127.0.0.1:{server.server_port}"

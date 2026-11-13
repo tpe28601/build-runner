@@ -1,5 +1,12 @@
 @echo off
 setlocal
+set "TB_ACTIVE_TOOL="
+for /f "delims=" %%I in ('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Standalone-Update.ps1" -Action Resolve') do set "TB_ACTIVE_TOOL=%%I"
+if defined TB_ACTIVE_TOOL (
+    if not defined DEVTOOLBOX_PYTHON if exist "%~dp0.venv\Scripts\python.exe" set "DEVTOOLBOX_PYTHON=%~dp0.venv\Scripts\python.exe"
+    call "%TB_ACTIVE_TOOL%\Run-CLI.bat" %*
+    exit /b
+)
 set "PYTHONPATH=%~dp0;%PYTHONPATH%"
 if defined DEVTOOLBOX_PYTHON (
     "%DEVTOOLBOX_PYTHON%" -m build_runner.cli %*
