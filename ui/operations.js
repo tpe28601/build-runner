@@ -33,6 +33,7 @@ const pageHelp = {
     "可查看內建的 Clean + Build、Clean + Build (-nou) 與 Clean + Build + Package，也可複製成自己的 Recipe，調整步驟、參數表或產出物規則。",
     "在參數表匯入檔案並編輯互斥規則。Preset 可從 Build 頁另存。",
     "在產出物設定選取、排除、命名和 ZIP。手動執行前先預覽並確認。",
+    "「匯出設定包」把勾選的 Recipe、參數表、preset 與產出物規則存成 .brpack.json；「匯入設定包」會先列出新增與名稱重複的項目，逐項選擇覆蓋、改名或略過後才寫入，覆蓋前自動備份。",
   ]],
   settings: ["設定", [
     "歷史保留可依天數或筆數清理，0 不限制。",

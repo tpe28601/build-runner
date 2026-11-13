@@ -30,6 +30,7 @@ STATIC_FILES = {
     "/app.js": ("app.js", "text/javascript"),
     "/config.js": ("config.js", "text/javascript"),
     "/operations.js": ("operations.js", "text/javascript"),
+    "/packs.js": ("packs.js", "text/javascript"),
     "/ui-kit.css": ("ui-kit.css", "text/css"),
     "/tb-theme.js": ("tb-theme.js", "text/javascript"),
     "/tb-icons.js": ("tb-icons.js", "text/javascript"),

@@ -120,7 +120,7 @@ class ArtifactTests(unittest.TestCase):
     def test_repo_root_rule_collects_outside_the_workspace(self):
         with tempfile.TemporaryDirectory() as temp:
             repo = Path(temp) / "repo"
-            workspace = repo / "DellPkgs" / "Platform"
+            workspace = repo / "OemPkgs" / "Platform"
             roms = repo / "Build" / "DT" / "Pkg"
             roms.mkdir(parents=True)
             workspace.mkdir(parents=True)

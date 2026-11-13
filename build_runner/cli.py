@@ -10,7 +10,7 @@ import sys
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from build_runner import history, jobs, logtools, paramsets, workspaces
+from build_runner import history, jobs, logtools, packs, paramsets, workspaces
 from build_runner.paths import ROOT, TOOL_ID, ToolError, data_dir, read_json, save_config
 
 
@@ -43,6 +43,19 @@ def parser():
     imports.add_argument("file", type=Path)
     imports.add_argument("--name", required=True)
     imports.add_argument("--command", dest="build_command", help="Override the table's build executable")
+    export = commands.add_parser("export-pack", parents=[common], help="Export a settings pack (.brpack.json)")
+    export.add_argument("--out", type=Path, required=True)
+    export.add_argument("--recipe", action="append", help="Recipe name (repeatable)")
+    export.add_argument("--paramset", action="append", help="Parameter table name (repeatable)")
+    export.add_argument("--preset", action="append", help="TABLE/PRESET (repeatable; default: presets of chosen tables)")
+    export.add_argument("--artifact-rule", action="append", help="Artifact rule name (repeatable)")
+    export.add_argument("--all", action="store_true", dest="include_all", help="Export every saved item")
+    export.add_argument("--name", default="", help="Pack name")
+    export.add_argument("--description", default="", help="Pack description")
+    pack_import = commands.add_parser("import-pack", parents=[common], help="Import a settings pack")
+    pack_import.add_argument("file", type=Path)
+    pack_import.add_argument("--on-conflict", choices=packs.CONFLICT_ACTIONS,
+                             help="What to do with names that already exist (required when any exist)")
     commands.add_parser("jobs", parents=[common], help="List jobs")
     for name in ("status", "stop"):
         sub = commands.add_parser(name, parents=[common], help=f"{name.title()} a job")
@@ -79,6 +92,20 @@ def execute(args):
         result = paramsets.parse(raw, args.file.name, args.name, args.build_command)
         if not args.dry_run:
             save_config(data, "paramsets", result, overwrite=args.yes)
+    elif command == "export-pack":
+        pack, warnings = packs.export_pack(
+            data, recipe_names=args.recipe, paramset_names=args.paramset, preset_ids=args.preset,
+            artifact_names=args.artifact_rule, include_all=args.include_all, name=args.name,
+            description=args.description, tool_version=read_json(ROOT / "tool.json")["version"])
+        if not args.dry_run:
+            packs.write_pack(args.out, pack, overwrite=args.yes)
+        result = {"path": str(args.out), **{key: len(pack[key]) for key in packs.SECTIONS}}
+    elif command == "import-pack":
+        with args.file.open("rb") as stream:
+            raw = stream.read(packs.MAX_PACK_BYTES + 1)
+        pack = packs.parse(raw)
+        result = packs.apply(data, pack, default=args.on_conflict, dry_run=args.dry_run)
+        warnings = result.pop("warnings")
     elif command == "run":
         workspace = workspaces.get_workspace(data, args.workspace)
         result, warnings = jobs.start(data, workspace, args.recipe, args.preset, force=args.yes, dry_run=args.dry_run)

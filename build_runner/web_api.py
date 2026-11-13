@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from uuid import uuid4
 
-from . import ai, artifacts, history, jobs, logtools, paramsets, recipes, schedule, workspaces
+from . import ai, artifacts, history, jobs, logtools, packs, paramsets, recipes, schedule, workspaces
 from .paths import ToolError, config_records, file_lock, named_file, save_config, write_json
 
 
@@ -79,7 +79,7 @@ class Api:
         self.started = time.monotonic()
         self.mutations = threading.Lock()
         self.git_tasks = {}
-        self.git_busy = False
+        self.git_busy = None   # action name of the running Git task, None when idle
         self.artifact_previews = {}
         self.artifact_tasks = {}
         self.analyses = ai.Analyses()
@@ -114,10 +114,15 @@ class Api:
                                "items": [{"name": row["name"], "path": "", "rootPath": row["path"], "workspaceId": row["id"]}
                                          for row in workspaces.list_workspaces(self.data)]})
                 workspace = self.workspace_by_id(string(body, "workspaceId"))
+                scope = workspace["path"]
+                if body.get("anchor") == "repo":
+                    # 產出物規則「資料來源＝Repo 根」：Build\ 產出在 Git 工作樹頂層而非 Workspace 內，
+                    # 瀏覽範圍跟著錨到 repo 根；Workspace 不是 checkout 時退回 Workspace 根。
+                    scope = workspaces.repo_root(scope) or scope
                 if body.get("scan"):
-                    return ok(workspaces.scan_repos(path.strip(), workspace["path"],
+                    return ok(workspaces.scan_repos(path.strip(), scope,
                                                     int(body.get("depth") or 2), int(body.get("limit") or 50)))
-                return ok(workspaces.browse_folder(path.strip(), workspace["path"]))
+                return ok(workspaces.browse_folder(path.strip(), scope))
             if body.get("scan"):
                 return ok(workspaces.scan_repos(path.strip(), None,
                                                 int(body.get("depth") or 2), int(body.get("limit") or 50)))
@@ -143,6 +148,12 @@ class Api:
             return self.change_preset(method, body)
         if method == "POST" and path == "/api/paramsets/conflicts":
             return self.update_conflicts(body)
+        if method == "GET" and path == "/api/packs/inventory":
+            return ok(packs.inventory(self.data))
+        if method == "POST" and path == "/api/packs/export":
+            return self.export_pack(body)
+        if method == "POST" and path in ("/api/packs/preview", "/api/packs/import"):
+            return self.import_pack(body, preview=path.endswith("/preview"))
         if path == "/api/artifact-rules":
             if method == "GET":
                 try:
@@ -373,31 +384,42 @@ class Api:
 
     def git_action(self, workspace, body):
         action = string(body, "action")
-        if action not in ("refresh", "pull", "checkout"):
+        if action not in ("refresh", "pull", "checkout", "submodule"):
             raise HttpError(400, "INVALID_GIT_ACTION", "無效的 Git 操作。")
         branch = string(body, "branch") if action == "checkout" else None
+        force = action == "checkout" and bool(body.get("force"))
         if action != "refresh":
             confirm(body)
         with self.mutations:
             if self.git_busy:
-                raise HttpError(409, "JOB_BUSY", "已有 Git 工作正在執行。")
+                raise HttpError(409, "JOB_BUSY", f"已有 Git 工作正在執行（{self.git_busy}）。")
             while len(self.git_tasks) >= 30:
                 self.git_tasks.pop(next(iter(self.git_tasks)))
             task_id = uuid4().hex
             self.git_tasks[task_id] = {"id": task_id, "state": "running"}
-            self.git_busy = True
-        threading.Thread(target=self.run_git, args=(task_id, workspace, action, branch), daemon=action == "refresh").start()
+            self.git_busy = action
+        # Submodule updates can run for many minutes; a non-daemon thread would
+        # keep the server from shutting down. Refresh is short and read-only.
+        threading.Thread(target=self.run_git, args=(task_id, workspace, action, branch, force),
+                         daemon=action in ("refresh", "submodule")).start()
         return ok(self.git_tasks[task_id].copy(), 202)
 
-    def run_git(self, task_id, workspace, action, branch):
+    def run_git(self, task_id, workspace, action, branch, force=False):
         path = workspace["path"]
         outcome = {"id": task_id}
         try:
             git = workspaces.git_state(path, include_dirty=False)
             refs = git_refs(path) if git["gitCommonDir"] else []
             if action != "refresh":
-                self.mutate_git(path, git["gitCommonDir"], action, branch, refs)
+                self.mutate_git(path, git["gitCommonDir"], action, branch, refs, force)
             outcome.update(state="success", workspace={**workspace, **workspaces.git_state(path)}, branches=refs)
+            if action == "checkout" and git["gitCommonDir"]:
+                # Probe registered submodules so the UI can skip the post-checkout
+                # update prompt for repos that have none. Keep the key absent when
+                # the probe itself failed - the UI then asks, on the safe side.
+                probe = workspaces.git(path, "submodule", "status")
+                if probe is not None:
+                    outcome["hasSubmodules"] = bool(probe.strip())
         except ToolError as exc:
             outcome.update(state="failed", error=tool_error(exc).response["error"])
         except OSError as exc:
@@ -405,9 +427,9 @@ class Api:
         finally:
             with self.mutations:
                 self.git_tasks[task_id] = outcome
-                self.git_busy = False
+                self.git_busy = None
 
-    def mutate_git(self, path, common, action, branch, refs):
+    def mutate_git(self, path, common, action, branch, refs, force=False):
         with file_lock(jobs.git_lock_path(self.data)):
             # Synchronize with a build submission that passed validation just
             # before this Git operation acquired its reservation.
@@ -421,12 +443,30 @@ class Api:
                     raise ToolError("JOB_BUSY", "此 Git repo 有執行中或排隊的 build。")
             if action == "pull":
                 workspaces.git(path, "pull", "--ff-only", required=True, timeout=120)
+            elif action == "submodule":
+                # 切分支後同步子模組到該分支記錄的 commit；大型 repo 慢，給 30 分鐘
+                workspaces.git(path, "submodule", "update", "--init", "--recursive", required=True, timeout=1800)
             elif branch not in refs:
                 raise ToolError("INVALID_BRANCH", "請選擇列出的 local 或 remote branch。")
             elif branch.startswith("refs/heads/"):
-                workspaces.git(path, "switch", "--", branch.removeprefix("refs/heads/"), required=True)
+                if force:
+                    # checkout -f is the only command that gets past Git's sequencer
+                    # guard ("cannot switch branch while reverting"); switch
+                    # --discard-changes is still refused. It discards tracked edits
+                    # and cancels revert/cherry-pick/merge (untracked files remain).
+                    # No `--` separator: checkout reads arguments after it as pathspecs.
+                    workspaces.git(path, "checkout", "-f", branch.removeprefix("refs/heads/"),
+                                   required=True, timeout=600)
+                else:
+                    # 600s: monorepo checkouts switch slowly; the 10s default was tight.
+                    workspaces.git(path, "switch", "--", branch.removeprefix("refs/heads/"),
+                                   required=True, timeout=600)
+            elif force:
+                workspaces.git(path, "checkout", "-f", "--track", branch.removeprefix("refs/remotes/"),
+                               required=True, timeout=600)
             else:
-                workspaces.git(path, "switch", "--track", "--", branch.removeprefix("refs/remotes/"), required=True)
+                workspaces.git(path, "switch", "--track", "--", branch.removeprefix("refs/remotes/"),
+                               required=True, timeout=600)
 
     def recipe_route(self, method, body):
         if method == "GET":
@@ -482,6 +522,41 @@ class Api:
             return ok(table)
         existed = save_config(self.data, "paramsets", table, overwrite=body.get("confirm") is True)
         return ok(table, 200 if existed else 201)
+
+    def export_pack(self, body):
+        def names(field):
+            values = body.get(field, [])
+            if not isinstance(values, list) or len(values) > packs.MAX_ITEMS or any(
+                    not isinstance(value, str) or not value or "\0" in value for value in values):
+                raise HttpError(400, "INVALID_ARGUMENTS", f"{field} 必須是名稱清單。")
+            return values
+        name = body.get("name") or ""
+        description = body.get("description") or ""
+        if not isinstance(name, str) or not isinstance(description, str):
+            raise HttpError(400, "INVALID_ARGUMENTS", "設定包名稱與說明必須是文字。")
+        pack, warnings = packs.export_pack(
+            self.data, recipe_names=names("recipes"), paramset_names=names("paramsets"),
+            preset_ids=names("presets"), artifact_names=names("artifactRules"),
+            name=name, description=description, tool_version=self.manifest["version"])
+        stem = re.sub(r"[^\w.-]+", "_", pack["name"]).strip("._") or "build-runner-settings"
+        return ok({"content": packs.dumps(pack), "filename": stem + packs.SUFFIX,
+                   "counts": {key: len(pack[key]) for key in packs.SECTIONS}}, warnings=warnings)
+
+    def import_pack(self, body, preview):
+        content = body.get("content")
+        if not isinstance(content, str) or not content:
+            raise HttpError(400, "INVALID_UPLOAD", "請選擇設定包檔案。")
+        decisions = body.get("decisions", {})
+        if not isinstance(decisions, dict) or any(not isinstance(key, str) for key in decisions):
+            raise HttpError(400, "INVALID_ARGUMENTS", "decisions 必須是物件。")
+        pack = packs.parse(content)
+        if not preview:
+            confirm(body)
+        with self.mutations:
+            result = packs.apply(self.data, pack, decisions, dry_run=preview)
+        warnings = result.pop("warnings")
+        result["pack"] = {key: pack[key] for key in ("name", "description", "createdAt", "tool", "version")}
+        return ok(result, warnings=warnings)
 
     def change_preset(self, method, body):
         name = string(body, "name")

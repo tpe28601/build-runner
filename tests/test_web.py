@@ -102,6 +102,28 @@ class WebTests(unittest.TestCase):
         self.assertEqual(listing["selection"], child.name)
         self.api("POST", "/api/browse", {**scope, "path": str(root.parent)}, code=400)
 
+    def test_browse_repo_anchor_scopes_to_git_toplevel(self):
+        repo = self.root / "Anchor repo"
+        platform = repo / "PlatformPkg"
+        build = repo / "Build" / "DT"
+        build.mkdir(parents=True)
+        platform.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(repo)], check=True, capture_output=True)
+        row = self.api("POST", "/api/workspaces", {"name": "Anchor repo", "path": str(platform)}, code=201)["result"]
+        scope = {"relative": True, "workspaceId": row["id"], "anchor": "repo"}
+        listing = self.api("POST", "/api/browse", scope)["result"]
+        self.assertEqual(listing["rootPath"].lower(), str(repo.resolve()).lower())
+        self.assertEqual(listing["selection"], ".")
+        listing = self.api("POST", "/api/browse", {**scope, "path": str(build)})["result"]
+        self.assertEqual(listing["selection"], "Build/DT")
+        self.api("POST", "/api/browse", {**scope, "path": str(repo.parent)}, code=400)
+        # Workspace 不是 Git checkout：anchor=repo 退回 Workspace 根
+        plain = self.root / "Plain folder"
+        plain.mkdir()
+        row = self.api("POST", "/api/workspaces", {"name": "Plain folder", "path": str(plain)}, code=201)["result"]
+        listing = self.api("POST", "/api/browse", {"relative": True, "workspaceId": row["id"], "anchor": "repo"})["result"]
+        self.assertEqual(listing["rootPath"].lower(), str(plain.resolve()).lower())
+
     def test_history_delete_requires_confirmation_and_removes_job_folder(self):
         job_id = "a" * 32
         folder = self.data / "jobs" / job_id
@@ -320,6 +342,54 @@ class WebTests(unittest.TestCase):
             task = self.api("GET", "/api/git-tasks/" + task["id"])["result"]
         self.assertEqual(task["state"], "success", task)
         self.assertEqual(task["workspace"]["branch"], "sample-other")
+        self.assertIs(task["hasSubmodules"], False)   # no .gitmodules: UI must skip the prompt
+        # submodule update must succeed even in a repo without submodules;
+        # a request without confirm must be rejected first.
+        self.api("POST", git, {"action": "submodule"}, code=400)
+        task = self.api("POST", git, {"action": "submodule", "confirm": True}, code=202)["result"]
+        deadline = time.monotonic() + 10
+        while task["state"] == "running" and time.monotonic() < deadline:
+            time.sleep(0.15)
+            task = self.api("GET", "/api/git-tasks/" + task["id"])["result"]
+        self.assertEqual(task["state"], "success", task)
+
+        # An in-progress revert shows as a badge, blocks the normal switch, and is
+        # cancelled by the force variant (checkout -f), which also discards edits.
+        self.assertEqual(subprocess.run(["git", "-C", str(main), "branch", "sample-third"],
+                                        capture_output=True, timeout=10).returncode, 0)
+        (linked / "note.txt").write_text("v2\n", encoding="utf-8")
+        for args in (("add", "note.txt"),
+                     # sample-third stays on the pre-note commit: note.txt must not
+                     # exist there, so a discarded checkout removes the file.
+                     ("-c", "user.name=Sample", "-c", "user.email=sample@example.invalid",
+                      "-c", "commit.gpgsign=false", "commit", "-m", "note v2")):
+            result = subprocess.run(["git", "-C", str(linked), *args], capture_output=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(subprocess.run(["git", "-C", str(linked), "revert", "-n", "HEAD"],
+                                        capture_output=True, timeout=10).returncode, 0)
+
+        def workspace_row():
+            return next(r for r in self.api("GET", "/api/workspaces")["result"] if r["id"] == imported[0]["id"])
+
+        def git_task(body, state):
+            task = self.api("POST", git, body, code=202)["result"]
+            deadline = time.monotonic() + 10
+            while task["state"] == "running" and time.monotonic() < deadline:
+                time.sleep(0.15)
+                task = self.api("GET", "/api/git-tasks/" + task["id"])["result"]
+            self.assertEqual(task["state"], state, task)
+            return task
+
+        self.assertEqual(workspace_row()["gitOperation"], "revert")
+        git_task({"action": "checkout", "branch": "refs/heads/sample-third", "confirm": True}, "failed")
+        # locale-independent proof the switch was refused: nothing moved.
+        self.assertEqual(workspace_row()["branch"], "sample-other")
+        self.assertEqual(workspace_row()["gitOperation"], "revert")
+        forced = git_task({"action": "checkout", "branch": "refs/heads/sample-third",
+                           "force": True, "confirm": True}, "success")
+        self.assertEqual(forced["workspace"]["branch"], "sample-third")
+        self.assertIsNone(workspace_row()["gitOperation"])
+        self.assertFalse((linked / "note.txt").exists())
 
     @unittest.skipUnless(os.name == "nt", "Uses Windows batch files")
     def test_multi_workspace_validation_precedes_queueing(self):
@@ -457,7 +527,7 @@ class WebTests(unittest.TestCase):
 
     def test_artifact_preview_for_a_job_keeps_the_repo_root(self):
         repo = self.root / "Repo package"
-        (repo / "DellPkgs" / "DT" / "Platform").mkdir(parents=True)
+        (repo / "OemPkgs" / "DT" / "Platform").mkdir(parents=True)
         roms = repo / "Build" / "DT" / "Pkg"
         roms.mkdir(parents=True)
         (roms / "bios.rom").write_bytes(b"rom")

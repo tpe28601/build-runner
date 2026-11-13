@@ -11,7 +11,7 @@
 
 ## 第一次建置
 
-1. 在 **Workspace** 新增資料夾，或選取 Git repo 後匯入 worktree。
+1. 在 **Workspace** 新增資料夾，或選取 Git repo 後匯入 worktree。卡片上的「切換分支」支援直接輸入關鍵字搜尋；切換成功後會詢問是否更新 Submodule。revert／rebase 等進行中會顯示紅色標章且 Git 會拒絕切換；必要時可勾「強制」用 `git checkout -f` 切換（丟棄未提交變更、取消進行中的操作，untracked 檔保留）。
 2. 在 **流程設定 → Recipe** 查看內建 **Clean + Build**、**Clean + Build (-nou)** 或 **Clean + Build + Package**。打包範例會在清理與建置成功後套用 BIOS ROM 產出物規則。按 **複製為新 Recipe** 可調整 `builda.bat` 的工作子資料夾，並套用符合專案的產出物規則。
 3. 在 **Build** 選取 Workspace 和 Recipe。檢查指令與資料夾衝突後開始建置。
 4. 建置在背景執行。在 **Log** 查看即時輸出、搜尋警告或錯誤，遇到輸入提示時可送出 Enter。執行中可從 **總覽** 或 **Log** 停止或重新建置。重新建置會用原流程從第一步開始，並保留原 Job 的紀錄。
@@ -19,9 +19,27 @@
 ## 參數、產出物與排程
 
 - 在 **流程設定 → 參數表與 preset** 匯入 Markdown、CSV、XLSX 或 JSON。設定 Recipe 使用該表後，可在 Build 頁分組搜尋、選取參數、套用 preset 並即時預覽指令。Markdown 的限制備註可另設為互斥規則。
-- 在 **流程設定 → 產出物** 設定 glob、排除項、改名範本、目的地與 ZIP。手動整理會先顯示預覽。要在 build 成功後自動整理，將規則組連結到 Recipe。同名檔案會加序號。
+- 在 **流程設定 → 產出物** 設定 glob、排除項、改名範本、目的地與 ZIP。手動整理會先顯示預覽。要在 build 成功後自動整理，將規則組連結到 Recipe。同名檔案會加序號。規則選「資料來源＝Repo 根」時，資料夾挑選器會從 Git 工作樹頂層開始瀏覽，選好的資料夾依 repo 根寫成相對路徑。
 - 在 **工作排程** 管理每日或每週的 Windows 工作排程。排程使用 Windows 本機時間，透過 CLI 執行，即使 Web 或 Hub 已關閉也可建置。通知和歷史保留在 **設定** 管理。
 - AI 分析預設關閉，先在 **設定 → AI 分析設定** 開啟「啟用 AI 分析功能」。開啟後在 **Log** 可複製 AI 提示詞，或將選定 Job 的相關 log 送往已設定的 OpenCode 或相容端點。在 Windows 使用 OpenCode 時，請設定 `.exe` 的絕對路徑。
+
+## 設定包
+
+設定包（`.brpack.json`）把 Recipe、參數表、preset 與產出物規則打包成一個 UTF-8 JSON 檔，方便在團隊間或換電腦時共用。設定包不含 Workspace 路徑；匯出時若 Recipe 或產出物規則含絕對路徑或目前的使用者名稱，會顯示提醒。
+
+- **匯出**：在 **流程設定** 右上角按「匯出設定包」，逐項勾選要包含的內容後下載。
+- **匯入**：按「匯入設定包」並選檔，會先檢查格式與版本，再列出要新增的項目和名稱重複的項目。名稱重複的項目逐一選擇「覆蓋」、「改名」（自動加 `-2`）或「略過」，確認後才寫入。被覆蓋的原檔會先備份到資料夾的 `backups\pack-import-<時間>\`。改名的參數表或產出物規則，設定包內引用它的 Recipe 會一併改用新名稱。
+- Recipe 或 preset 引用的參數表、產出物規則、preset 不在設定包也不在本機時，匯出與匯入都會提示。
+- 範例：[`examples/sample.brpack.json`](examples/sample.brpack.json)。
+
+```powershell
+.\Run-CLI.bat export-pack --out .\team.brpack.json --all
+.\Run-CLI.bat export-pack --out .\platforma.brpack.json --recipe 'PlatformA Release' --paramset PlatformA
+.\Run-CLI.bat import-pack .\examples\sample.brpack.json --dry-run
+.\Run-CLI.bat import-pack .\team.brpack.json --on-conflict rename
+```
+
+`export-pack` 可重複指定 `--recipe`、`--paramset`、`--preset 參數表/preset`、`--artifact-rule`；只指定參數表時會一併帶上它的 preset。`import-pack` 遇到已存在的名稱時，必須用 `--on-conflict overwrite|rename|skip` 指定處理方式，否則不會寫入（exit code 4）。
 
 ## CLI 範例
 

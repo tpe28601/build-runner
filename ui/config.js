@@ -230,7 +230,7 @@ function editorInput(title, value, update, options = {}) {
   label.append(caption);
   if (options.folder) {
     const row = element("span", "tb-input-row");
-    const browse = button("", () => openFolderPicker(input, options.folder === "relative"), "tb-btn tb-btn--icon");
+    const browse = button("", () => openFolderPicker(input, options.folder === "relative", options.anchor ? options.anchor() : null), "tb-btn tb-btn--icon");
     browse.title = "瀏覽" + title;
     browse.setAttribute("aria-label", browse.title);
     input.setAttribute("aria-label", title);
@@ -462,8 +462,94 @@ function renderTableDetails() {
     }));
     box.append(row);
   }
+  box.append(parameterBrowser(table));
   const flags = new Map(table.params.map((param) => [param.key, param.flag]));
   $("table-conflicts").value = (table.conflicts || []).map((group) => group.map((key) => flags.get(key) || key).join(", ")).join("\n");
+}
+
+// 唯讀的完整參數清單：依分組可展開，可搜尋旗標／說明，可只看某個 preset 會設定的參數。
+function parameterBrowser(table) {
+  const wrap = element("div", "stack param-browser");
+  wrap.append(element("h3", "", "參數清單"));
+  const tools = element("div", "editor-fields");
+  const searchField = element("label", "tb-field");
+  const search = element("input", "tb-input");
+  search.type = "search";
+  search.placeholder = "旗標或說明";
+  searchField.append(element("span", "tb-field__label", "搜尋參數"), search);
+  const presetField = element("label", "tb-field");
+  const preset = element("select", "tb-select");
+  fillPresets(preset, table, "全部參數", "");
+  presetField.append(element("span", "tb-field__label", "只看 preset 設定的參數"), preset);
+  tools.append(searchField, presetField);
+  const actions = element("div", "row");
+  const count = element("span", "tb-small tb-muted");
+  const groupsBox = element("div", "stack");
+  const setOpen = (open) => groupsBox.querySelectorAll("details").forEach((node) => { node.open = open; });
+  actions.append(count, element("span", "tb-spacer"), button("全部展開", () => setOpen(true)), button("全部收合", () => setOpen(false)));
+  wrap.append(tools, actions, groupsBox);
+  const typeLabels = { switch: "開關", choice: "選項", value: "帶值" };
+  const usedBy = new Map();   // 參數 key -> 有實際設定它（勾選或填值）的 preset 名稱
+  for (const [name, presetValues] of Object.entries(table.presets || {})) {
+    for (const [key, value] of Object.entries(presetValues)) {
+      if (value === false || value === "") continue;
+      if (!usedBy.has(key)) usedBy.set(key, []);
+      usedBy.get(key).push(name);
+    }
+  }
+
+  function valueText(param, value) {
+    if (param.type === "switch") return value ? "勾選" : "不勾選";
+    return value === "" ? "不使用" : String(value);
+  }
+
+  function render() {
+    const query = search.value.trim().toLowerCase();
+    const values = preset.value ? table.presets?.[preset.value] || {} : null;
+    const groups = new Map();
+    let shown = 0;
+    for (const param of table.params) {
+      if (values && !(param.key in values)) continue;
+      if (query && !(param.flag + " " + (param.desc || "") + " " + param.group).toLowerCase().includes(query)) continue;
+      if (!groups.has(param.group)) groups.set(param.group, []);
+      groups.get(param.group).push(param);
+      shown++;
+    }
+    count.textContent = "顯示 " + shown + " / " + table.params.length + " 項";
+    groupsBox.replaceChildren();
+    if (!shown) groupsBox.append(element("p", "tb-muted", "沒有符合的參數。"));
+    let first = true;
+    for (const [name, params] of groups) {
+      const details = element("details", "param-group");
+      details.open = Boolean(query || values) || first;   // 搜尋或篩 preset 時展開有命中的組，平常只展開第一組
+      first = false;
+      details.append(element("summary", "", name + "（" + params.length + "）"));
+      const list = element("dl", "param-list");
+      for (const param of params) {
+        const term = element("dt");
+        term.append(element("code", "parameter-flag", param.flag));
+        if (param.type === "value" && param.placeholder) term.append(element("code", "tb-muted", " <" + param.placeholder + ">"));
+        term.append(element("span", "tb-badge", typeLabels[param.type] || param.type));
+        if (values) term.append(element("span", "tb-badge tb-badge--ok", valueText(param, values[param.key])));
+        else {
+          if (param.default !== undefined && param.default !== false && param.default !== "") {
+            term.append(element("span", "tb-badge", "預設 " + valueText(param, param.default)));
+          }
+          for (const presetName of usedBy.get(param.key) || []) term.append(element("span", "tb-badge tb-badge--ok", presetName));
+        }
+        const desc = element("dd", "tb-small");
+        desc.textContent = param.desc || "（沒有說明）";
+        if (param.type === "choice") desc.append(element("div", "tb-muted", "可選：" + param.choices.join(" | ")));
+        list.append(term, desc);
+      }
+      details.append(list);
+      groupsBox.append(details);
+    }
+  }
+  search.addEventListener("input", render);
+  preset.addEventListener("change", render);
+  render();
+  return wrap;
 }
 
 $("edit-table").addEventListener("change", renderTableDetails);
@@ -576,7 +662,7 @@ function renderArtifactRules() {
     sourceField.append(element("span", "tb-field__label", "資料來源"), source);
     item.append(
       sourceField,
-      field("Build 產出資料夾（相對資料來源）", "sourceDir", { folder: "relative" }),
+      field("Build 產出資料夾（相對資料來源）", "sourceDir", { folder: "relative", anchor: () => rule.root === "repo" ? "repo" : null }),
       field("檔名或 Glob（每行一條）", "selectText", { rows: 2 }),
       field("排除 Glob（相對資料來源，每行一條）", "excludeText", { rows: 2 }),
       field("改名範本", "rename"),

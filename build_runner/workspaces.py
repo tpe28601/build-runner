@@ -63,6 +63,7 @@ def browse_folder(path, scope=None):
         raise ToolError("FOLDER_UNAVAILABLE", "無法讀取此資料夾。") from exc
     return {"current": str(folder), "parent": None if folder in (root, folder.parent) else str(folder.parent),
             "selection": folder.relative_to(root).as_posix() if root is not None else str(folder),
+            "rootPath": str(root) if root is not None else None,
             "items": sorted(items, key=lambda item: item["name"].casefold()), "truncated": truncated}
 
 
@@ -151,7 +152,14 @@ def git(path, *args, required=False, timeout=10):
             env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
+    except subprocess.TimeoutExpired as exc:
+        # The kill on timeout leaves the git child (and any index.lock it held)
+        # in an unknown state; surface that instead of "git not installed".
+        message = f"Git command timed out after {timeout}s; a background Git process may still be running."
+        if required:
+            raise ToolError("GIT_TIMEOUT", message, 5) from exc
+        return None
+    except OSError as exc:
         # Broad on purpose: besides "no git installed", spawning can fail with
         # transient OS errors (e.g. 0x800700E8 ERROR_NO_DATA when a pseudo
         # console tears down) - workspace badges must degrade, jobs must not die.
@@ -165,20 +173,46 @@ def git(path, *args, required=False, timeout=10):
     return run.stdout.rstrip("\r\n")
 
 
+# In-progress operation markers, checked in this order. They live in the
+# per-worktree gitdir. Multi-commit revert/cherry-pick reuse the rebase-merge
+# sequencer dir, so revert (REVERT_HEAD) must match before rebase, while an
+# interactive rebase (CHERRY_PICK_HEAD without REVERT_HEAD) stays "rebase".
+# Verified on git 2.55: bisect leaves BISECT_LOG without creating rebase-merge.
+OPERATION_MARKERS = (
+    ("bisect", ("BISECT_LOG",)),
+    ("revert", ("REVERT_HEAD",)),
+    ("rebase", ("rebase-merge", "rebase-apply")),
+    ("cherry-pick", ("CHERRY_PICK_HEAD",)),
+    ("merge", ("MERGE_HEAD",)),
+)
+
+
 def git_state(path, include_dirty=True):
-    common = git(path, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    # --absolute-git-dir costs nothing extra here and yields the per-worktree
+    # dir where revert/cherry-pick/merge state files live.
+    dirs = git(path, "rev-parse", "--path-format=absolute", "--git-common-dir", "--absolute-git-dir")
+    common, _, gitdir = (dirs or "").partition("\n")
     if not common:
-        return {"gitCommonDir": None, "branch": None, "commit": None, "subject": None, "dirty": None}
+        return {"gitCommonDir": None, "branch": None, "commit": None, "subject": None, "dirty": None,
+                "gitOperation": None}
     branch = git(path, "symbolic-ref", "--quiet", "--short", "HEAD")
     head = git(path, "log", "-1", "--format=%h%n%s")
     commit, _, subject = (head or "").partition("\n")
     dirty = git(path, "status", "--porcelain") if include_dirty else None
+    operation = None
+    if gitdir:
+        marker = Path(gitdir.strip())
+        for name, files in OPERATION_MARKERS:
+            if any((marker / file).exists() for file in files):
+                operation = name
+                break
     return {
         "gitCommonDir": path_key(common),
         "branch": branch,
         "commit": commit or None,
         "subject": subject or None,
         "dirty": bool(dirty) if dirty is not None else None,
+        "gitOperation": operation,
     }
 
 

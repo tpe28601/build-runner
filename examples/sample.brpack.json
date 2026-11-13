@@ -1,0 +1,63 @@
+{
+  "format": "build-runner-pack",
+  "version": 1,
+  "name": "sample",
+  "description": "Sample settings pack for PlatformA: one parameter table, two presets, two Recipes and an artifact rule.",
+  "createdAt": "2026-01-01T00:00:00Z",
+  "tool": { "id": "build-runner", "version": "0.5.0" },
+  "recipes": [
+    {
+      "name": "PlatformA Release",
+      "paramset": "PlatformA",
+      "artifacts": "PlatformA-output",
+      "steps": [
+        { "name": "Clean", "argv": ["build.bat", "-clean"], "continueOnFail": false },
+        { "name": "Build", "argv": ["build.bat"], "useParams": true, "preset": "release" }
+      ],
+      "env": {},
+      "timeoutMin": 120
+    },
+    {
+      "name": "PlatformA Debug",
+      "paramset": "PlatformA",
+      "steps": [
+        { "name": "Build", "argv": ["build.bat"], "useParams": true, "preset": "debug" }
+      ],
+      "env": {},
+      "timeoutMin": 120
+    }
+  ],
+  "paramsets": [
+    {
+      "name": "PlatformA",
+      "command": "build.bat",
+      "params": [
+        { "key": "release", "flag": "-r", "type": "switch", "group": "Build", "desc": "Release build" },
+        { "key": "debug", "flag": "-d", "type": "switch", "group": "Build", "desc": "Debug build" },
+        { "key": "board", "flag": "-board", "type": "choice", "group": "Options", "choices": ["BoardA", "BoardB"], "desc": "Target board" },
+        { "key": "label", "flag": "-label", "type": "value", "group": "Options", "desc": "Output label", "placeholder": "sample" }
+      ],
+      "conflicts": [["release", "debug"]],
+      "notes": ["Sample table. Replace the flags with your build script's options."]
+    }
+  ],
+  "presets": [
+    { "paramset": "PlatformA", "name": "release", "values": { "release": true, "board": "BoardA" } },
+    { "paramset": "PlatformA", "name": "debug", "values": { "debug": true, "board": "BoardA" } }
+  ],
+  "artifactRules": [
+    {
+      "name": "PlatformA-output",
+      "rules": [
+        {
+          "select": ["Build/**/*.bin"],
+          "exclude": ["**/temp/**"],
+          "rename": "{name}_{commit7}{ext}",
+          "dest": "Artifacts/{date}",
+          "zip": { "enabled": false },
+          "when": "success"
+        }
+      ]
+    }
+  ]
+}

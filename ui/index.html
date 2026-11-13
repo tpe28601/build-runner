@@ -12,6 +12,7 @@
   <script defer src="/app.js"></script>
   <script defer src="/config.js"></script>
   <script defer src="/operations.js"></script>
+  <script defer src="/packs.js"></script>
 </head>
 <body class="tb-app">
   <header class="tool-topbar tb-hide-embedded">
@@ -206,10 +207,15 @@
 
       <section id="recipes" hidden>
         <h1 class="tb-sr-only">流程設定</h1>
-        <div class="tb-tabs" role="group" aria-label="流程設定分類">
-          <button class="tb-tab is-active" type="button" data-config="recipe-editor" aria-pressed="true">Recipe</button>
-          <button class="tb-tab" type="button" data-config="parameter-editor" aria-pressed="false">參數表與 preset</button>
-          <button class="tb-tab" type="button" data-config="artifact-editor" aria-pressed="false">產出物</button>
+        <div class="row pack-bar">
+          <div class="tb-tabs" role="group" aria-label="流程設定分類">
+            <button class="tb-tab is-active" type="button" data-config="recipe-editor" aria-pressed="true">Recipe</button>
+            <button class="tb-tab" type="button" data-config="parameter-editor" aria-pressed="false">參數表與 preset</button>
+            <button class="tb-tab" type="button" data-config="artifact-editor" aria-pressed="false">產出物</button>
+          </div>
+          <span class="tb-spacer"></span>
+          <button id="pack-export-open" class="tb-btn" type="button" aria-haspopup="dialog" aria-controls="pack-export"><i data-tb-icon="download"></i>匯出設定包</button>
+          <button id="pack-import-open" class="tb-btn" type="button" aria-haspopup="dialog" aria-controls="pack-import"><i data-tb-icon="package"></i>匯入設定包</button>
         </div>
         <div id="recipe-editor" class="tb-card stack">
           <div class="editor-fields">
@@ -353,6 +359,37 @@
     <div id="page-help-content" class="page-help__body"></div>
     <form id="page-help-actions" method="dialog" class="tb-dialog__actions page-help__foot">
       <button class="tb-btn tb-btn--primary" type="submit" autofocus>了解</button>
+    </form>
+  </dialog>
+  <dialog id="pack-export" class="tb-dialog pack-dialog" aria-labelledby="pack-export-title">
+    <form id="pack-export-form" class="stack">
+      <h2 id="pack-export-title" class="tb-dialog__title">匯出設定包</h2>
+      <p class="tb-small tb-muted">存成 .brpack.json，可在另一台電腦用「匯入設定包」載入。不含 Workspace 路徑。</p>
+      <div class="editor-fields">
+        <label class="tb-field"><span class="tb-field__label">設定包名稱</span><input id="pack-name" class="tb-input" maxlength="80" placeholder="build-runner-settings"></label>
+        <label class="tb-field"><span class="tb-field__label">說明（選填）</span><input id="pack-description" class="tb-input" maxlength="300"></label>
+      </div>
+      <label class="check"><input id="pack-all" type="checkbox"><span>全選</span></label>
+      <div id="pack-export-items" class="stack pack-items"></div>
+      <div id="pack-export-warnings" class="stack"></div>
+      <div class="tb-dialog__actions">
+        <button class="tb-btn" type="button" data-close="pack-export">取消</button>
+        <button class="tb-btn tb-btn--primary" type="submit"><i data-tb-icon="download"></i>下載設定包</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="pack-import" class="tb-dialog pack-dialog" aria-labelledby="pack-import-title">
+    <form id="pack-import-form" class="stack">
+      <h2 id="pack-import-title" class="tb-dialog__title">匯入設定包</h2>
+      <label class="tb-field"><span class="tb-field__label">選擇設定包</span><input id="pack-file" type="file" accept=".json,.brpack.json"></label>
+      <div id="pack-import-summary" class="stack"></div>
+      <div id="pack-import-items" class="stack pack-items"></div>
+      <div id="pack-import-warnings" class="stack"></div>
+      <p class="tb-small tb-muted">名稱重複的項目要選「覆蓋／改名／略過」。覆蓋前會先備份原檔到資料夾的 backups\。</p>
+      <div class="tb-dialog__actions">
+        <button class="tb-btn" type="button" data-close="pack-import">取消</button>
+        <button id="pack-import-confirm" class="tb-btn tb-btn--primary" type="submit" disabled>確認匯入</button>
+      </div>
     </form>
   </dialog>
   <div class="tb-toast-area" role="status" aria-atomic="true"><div id="toast" class="tb-toast" hidden></div></div>

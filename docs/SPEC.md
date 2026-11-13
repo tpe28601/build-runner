@@ -37,7 +37,7 @@ Dev-Toolbox 第四個工具：管理多個程式碼資料夾、用可自訂的�
 - 新增：選資料夾（輸入路徑，或後端用 `tkinter.filedialog` 開選擇視窗；tkinter 不能用時退回手動輸入）。
 - 從 git repo 匯入：輸入 repo 路徑，用 `git worktree list --porcelain` 列出所有 worktree，勾選後加入。
 - 每個 Workspace 顯示：名稱（可改）、路徑、branch、HEAD commit（短 hash＋標題）、是否有未提交變更、上次 build 結果。
-- 可做的 git 動作（都用參數陣列呼叫 git）：重新整理狀態、`git pull`（ff-only）、切 branch（列出 local／remote branch 選）。
+- 可做的 git 動作（都用參數陣列呼叫 git）：重新整理狀態、`git pull`（ff-only）、切 branch（local／remote 可搜尋，勾「強制」改走 `git checkout -f`：丟棄未提交變更並取消進行中的 revert/cherry-pick/merge）、`git submodule update --init --recursive`。revert/rebase 等進行中會在卡片顯示 `gitOperation` 標章，此時 Git 拒絕一般切換。
 - 不依賴 Git Ref Manager 的內部程式；兩者都直接讀 git，所以資料一致。
 - 存在 `workspaces.json`。
 
@@ -136,7 +136,7 @@ Dev-Toolbox 第四個工具：管理多個程式碼資料夾、用可自訂的�
 ```
 
 - 每條規則：挑檔（glob）→ 排除 → 改名 → 複製到目的地 → 可選壓縮。可多條規則，不同檔案放不同地方。
-- `root`（預設 `workspace`）決定 glob 與相對 `dest` 的錨點：`workspace`＝Workspace 資料夾；`repo`＝Git 工作樹頂層（`git rev-parse --show-toplevel`），用於「Workspace 是平台資料夾、Build 產出在 repo 根 `Build\`」的 Dell 佈局；Workspace 不在 checkout 內時該規則報錯。glob 仍不得含 `..`、盤符或絕對路徑（不得再逃出錨點）；`dest` 可絕對路徑，相對時落在錨點下。plan 檔逐筆記 `base`，舊 plan 無 `base` 時視為 workspace。
+- `root`（預設 `workspace`）決定 glob 與相對 `dest` 的錨點：`workspace`＝Workspace 資料夾；`repo`＝Git 工作樹頂層（`git rev-parse --show-toplevel`），用於「Workspace 是平台資料夾、Build 產出在 repo 根 `Build\`」的 OEM 平台佈局；Workspace 不在 checkout 內時該規則報錯。glob 仍不得含 `..`、盤符或絕對路徑（不得再逃出錨點）；`dest` 可絕對路徑，相對時落在錨點下。plan 檔逐筆記 `base`，舊 plan 無 `base` 時視為 workspace。
 - 內建 BIOS ROM 打包規則（`@builtin:bios-rom-package`）即用 `root: "repo"`。
 - 變數：`{workspace} {name} {ext} {branch} {commit7} {date} {time} {jobId} {recipe}`，以及參數值 `{param.plat}`。
 - 介面上可「預覽」：列出會被挑到的檔案和改名後的結果，確認後才執行。
@@ -198,6 +198,8 @@ Dev-Toolbox 第四個工具：管理多個程式碼資料夾、用可自訂的�
 | `triage <jobId 或 log 檔>` | 判讀 log |
 | `import-params <檔案> --name <名稱>` | 匯入參數表 |
 | `history [--export csv|json --out <檔>]` | 歷史 |
+| `export-pack --out <檔> [--recipe …] [--paramset …] [--preset 表/preset …] [--artifact-rule …] [--all]` | 匯出設定包（`.brpack.json`） |
+| `import-pack <檔> [--on-conflict overwrite|rename|skip] [--dry-run]` | 匯入設定包；有名稱重複又未指定處理方式時不寫入，exit 4 |
 
 exit code 照 TOOL-SPEC（0 成功、1 失敗、3 參數錯、4 取消、5 環境不符）。
 
@@ -206,10 +208,11 @@ exit code 照 TOOL-SPEC（0 成功、1 失敗、3 參數錯、4 取消、5 環�
 | 方法與路徑 | 用途 |
 | --- | --- |
 | `GET/POST/DELETE /api/workspaces` | Workspace 管理；GET 不吃 `git status`（大 repo 慢），未提交變更要由 `GET /api/workspaces/dirty`（並行檢查各 Workspace）取；`POST /api/workspaces/import-worktrees` |
-| `POST /api/workspaces/<id>/git` | `{ action: refresh|pull|checkout, branch }` |
+| `POST /api/workspaces/<id>/git` | `{ action: refresh|pull|checkout|submodule, branch }`；checkout 另可帶 `force: true`（`git checkout -f`，丟棄未提交變更、取消進行中的 sequencer 操作）。任務完成後的 `workspace` 含 `gitOperation`（revert/rebase/… 進行中標記） |
 | `GET/POST/DELETE /api/paramsets`、`POST /api/paramsets/import` | 參數表 |
 | `GET/POST/DELETE /api/recipes` | Recipe |
 | `GET/POST/DELETE /api/artifact-rules`、`POST /api/artifact-rules/preview` | 產出物規則（GET 第一筆為唯讀內建 `@builtin:bios-rom-package`） |
+| `GET /api/packs/inventory`、`POST /api/packs/export`、`POST /api/packs/preview`、`POST /api/packs/import` | 設定包：列出可匯出項目、匯出（回傳 JSON 內容與檔名）、預覽匯入計畫（`decisions` 為 `{ "<section>:<名稱>": "overwrite|rename|skip" }`）、寫入（需 `confirm: true`，覆蓋前備份到 `backups\`） |
 | `POST /api/jobs/check` | 建立前檢查衝突，回傳警告清單 |
 | `POST /api/jobs` | 建立 Job（可多個 Workspace） |
 | `GET /api/jobs`、`GET /api/jobs/<id>` | 列表／狀態 |

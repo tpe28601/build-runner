@@ -66,6 +66,29 @@ def get_recipe(data, name):
     return recipe
 
 
+def validate(record):
+    """Structural check for a saved or imported Recipe (no Workspace needed)."""
+    if not isinstance(record, dict):
+        raise ToolError("INVALID_RECIPE", "A Recipe must be a JSON object.")
+    steps = record.get("steps")
+    if not isinstance(steps, list) or not steps or any(
+            not isinstance(step, dict) or not isinstance(step.get("argv"), list) or not step["argv"]
+            or any(not isinstance(arg, str) or "\0" in arg for arg in step["argv"]) or not step["argv"][0]
+            for step in steps):
+        raise ToolError("INVALID_RECIPE", "A Recipe needs steps with a nonempty argv array.")
+    env = record.get("env", {})
+    timeout = record.get("timeoutMin", 180)
+    if (not isinstance(env, dict)
+            or any(not key or "=" in key or "\0" in key or not isinstance(value, str) or "\0" in value
+                   for key, value in env.items())
+            or type(timeout) is not int or timeout < 1):
+        raise ToolError("INVALID_RECIPE", "env must map names to strings and timeoutMin must be a positive integer.")
+    for field in ("paramset", "artifacts"):
+        if record.get(field) is not None and not isinstance(record.get(field), str):
+            raise ToolError("INVALID_RECIPE", f"{field} must be a name.")
+    return record
+
+
 def prepare(workspace, recipe, preset=None, *, table=None, overrides=None):
     root = Path(workspace["path"]).resolve()
     if not root.is_dir():

@@ -1,10 +1,58 @@
 # Changelog
 
+## [0.5.0] - 2026-11-13
+
+### 新增
+
+- **設定包匯出／匯入**（`.brpack.json`，`format: build-runner-pack`，`version: 1`）：Recipe、參數表、preset、產出物規則可逐項勾選匯出成單一 UTF-8 JSON，不含 Workspace 路徑；匯出時對絕對路徑與目前使用者名稱提出警告。
+  - Web：**流程設定** 右上角新增「匯出設定包」與「匯入設定包」對話框。匯入會先驗證格式與版本，列出新增與名稱重複的項目，逐項選擇覆蓋／改名（自動加 `-2`）／略過後才寫入。
+  - 覆蓋前把原檔備份到 `backups\pack-import-<時間>\`；改名的參數表或產出物規則會同步改寫設定包內 Recipe 與 preset 的引用。
+  - preset 隨設定包獨立傳遞，可併入既有參數表；所屬參數表不存在時略過並提示。Recipe 引用的參數表、產出物規則或 preset 不存在時也會提示。
+  - CLI：`export-pack --out <檔> [--recipe …] [--paramset …] [--preset 表/preset …] [--artifact-rule …] [--all]`、`import-pack <檔> [--on-conflict overwrite|rename|skip] [--dry-run]`；有名稱重複又未指定處理方式時不寫入並回傳 exit code 4（`CONFLICT_DECISION_REQUIRED`）。
+  - API：`GET /api/packs/inventory`、`POST /api/packs/export`、`POST /api/packs/preview`、`POST /api/packs/import`（需 `confirm: true`）。
+- 範例 `examples/sample.brpack.json`；測試 `tests/test_packs.py`（round-trip、三種衝突處理、逐項決定、壞檔、dry-run、CLI）。
+
+### 變更
+
+- **切換分支改用自製下拉清單**：原本的 input＋`<datalist>` 在 Chromium 會畫成深色泡泡、只列出符合目前值的一筆；改成與 select 選單同外觀的清單（深淺色皆可），分「本地」「遠端」兩組，預設帶入並標示目前分支，仍可輸入關鍵字過濾；方向鍵移動、Enter 選取並切換、Esc 關閉，右側箭頭可展開全部分支。
+- **流程設定 → 參數表與 preset 可瀏覽完整參數清單**：選參數表後在摘要下方列出全部參數，依分組可展開／收合（預設展開第一組，另有「全部展開／收合」），每組標題附筆數；每列顯示旗標、類型（開關／帶值／選項及可選值）、說明與使用它的 preset 標籤。可搜尋旗標與說明（顯示「顯示 x / y 項」並自動展開命中的組），也可只看某個 preset 設定的參數與值。唯讀，不在此編輯。
+- 文件與測試裡的平台專屬字樣改為中性寫法（「OEM 平台」、測試資料夾 `OemPkgs`）。
+- `tool.json` 說明改為中文。
+- 新增 `recipes.validate()`，供設定包匯入檢查 Recipe 結構。
+
+## [0.4.8] - 2026-11-13
+
+### 新增
+
+- **Workspace 卡顯示進行中的 Git 操作**：`git_state()` 偵測各 worktree 的 gitdir 內 `rebase-merge|rebase-apply`／`REVERT_HEAD`／`CHERRY_PICK_HEAD`／`MERGE_HEAD`／`BISECT_LOG` 標記檔，新增 `gitOperation` 欄位，卡片顯示紅色標章（如「Revert 進行中」）。Git 在 revert／cherry-pick／rebase 未完成時**拒絕任何分支切換**，以前只能按了切換失敗才知道；偵測沿用既有 `rev-parse` 行程順帶取 `--absolute-git-dir`，零額外 Git 行程。
+- **強制切換分支**：切換分支區新增「強制」核取方塊，送出 `force: true` 後端改走 `git checkout -f`（local）／`git checkout -f --track`（remote）。選 `checkout -f` 而非 `switch --discard-changes` 是因為後者對 sequencer 擋鎖一樣被拒（實測）；代價是**未提交的追蹤檔案變更永久丟棄**、進行中的 revert／cherry-pick／rebase 被取消（untracked 檔保留），confirm 文案對此明確警告；偵測到進行中操作而未勾強制時，確認框會先提示 Git 會拒絕並建議在終端機以 `--quit` 結束該操作以保留變更。
+
+### 變更
+
+- 分支切換的 Git 行程逾時從 10 秒放寬為 600 秒：大型 monorepo（整樹 checkout）切分支常超過 10 秒。
+
+## [0.4.7] - 2026-11-13
+
+### 新增
+
+- **Workspace 卡「切換分支」改為可直接搜尋的輸入框**：分支動輒上百條且名稱很長，原本的原生 select 難找。現在是 input＋datalist：直接輸入關鍵字即由瀏覽器即時過濾（含子字串比對），Enter 或按「切換」送出。候選顯示去 `refs/heads|remotes` 前綴的短名，送出前解析回完整 ref（貼上完整 ref 亦可；local／remote 同名優先 local；不在清單時提示先「重新整理 Git」）。
+- **切換分支後詢問是否更新 Submodule**：切換成功後跳出詢問（`git submodule update --init --recursive`，新 Git action `submodule`，30 分鐘上限、需 confirm）。只有 repo 查得「有 submodule」或查不到時才詢問，無子模組的 repo 不打擾；選擇即執行，不預設跑。409「已有 Git 工作正在執行」現在會附帶當前動作名（如 checkout／submodule）。
+
+### 修復
+
+- **Git 逾時的錯誤訊息不再誤報「找不到 Git」**：`workspaces.git()` 原本把 `TimeoutExpired` 與 `OSError` 混在同一個 `GIT_UNAVAILABLE`；現在逾時獨立為 `GIT_TIMEOUT`，並提示背景可能仍有 Git 行程（與殘留的 `index.lock`）。
+
+## [0.4.6] - 2026-11-13
+
+### 修復
+
+- **產出物規則「Build 產出資料夾」的資料夾挑選器跟隨資料來源**：規則選「資料來源＝Repo 根」時，📁 挑選器原本仍鎖在 Workspace 根瀏覽（`/api/browse` relative 模式只認 Workspace），而 OEM 平台的 `Build\` 產出在 repo 根、Workspace 外面，根本走不到，只能手動打字。現在挑選器會以 `anchor: "repo"` 請求，後端把瀏覽範圍錨到 `git rev-parse --show-toplevel` 的工作樹頂層（Workspace 不是 checkout 時退回 Workspace 根），選取的資料夾依 repo 根轉成相對路徑寫回；選單與非 relative 瀏覽行為不變，超出範圍仍被擋下。
+
 ## [0.4.5] - 2026-11-13
 
 ### 新增
 
-- **產出物規則可錨定到 repo 根**：每條規則新增 `root`（`workspace` 預設，或 `repo`＝`git rev-parse --show-toplevel` 的工作樹頂層）。Dell 平台的 Workspace 是平台資料夾（`builda.bat` 所在）但 `Build\` 產出在 repo 根，原本被鎖在 Workspace 內的 glob 因此挑不到檔；改用 `root: "repo"` 後可直接挑 `Build/DT/<平台>/RELEASE_CLANGPDB/ReleaseBIOS/*.rom`。 glob 仍不得含 `..`、盤符或絕對路徑（不得逃出錨點），相對 `dest` 落在錨點下、絕對路徑照舊。規則編輯器加「資料來源」選單，內建 BIOS ROM 打包規則改採 `root: "repo"`。
+- **產出物規則可錨定到 repo 根**：每條規則新增 `root`（`workspace` 預設，或 `repo`＝`git rev-parse --show-toplevel` 的工作樹頂層）。OEM 平台的 Workspace 是平台資料夾（`builda.bat` 所在）但 `Build\` 產出在 repo 根，原本被鎖在 Workspace 內的 glob 因此挑不到檔；改用 `root: "repo"` 後可直接挑 `Build/DT/<平台>/RELEASE_CLANGPDB/ReleaseBIOS/*.rom`。 glob 仍不得含 `..`、盤符或絕對路徑（不得逃出錨點），相對 `dest` 落在錨點下、絕對路徑照舊。規則編輯器加「資料來源」選單，內建 BIOS ROM 打包規則改採 `root: "repo"`。
 
 ### 變更
 
