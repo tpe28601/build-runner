@@ -369,6 +369,15 @@ async function loadAiErrors(index = 0) {
   }
 }
 
+// A picked line can go stale (log changed or the line no longer classifies as
+// an error); the API answers INVALID_LOG_RANGE, so reload the picker next time.
+function refreshStaleErrorLine(error) {
+  if (error?.code === "INVALID_LOG_RANGE" && $("ai-scope").value === "around") {
+    aiErrorPage = null;
+    void loadAiErrors();
+  }
+}
+
 function updateAnalysisActions() {
   const job = jobs.find((item) => item.id === log.id);
   const task = analysesByJob.get(log.id);
@@ -516,7 +525,13 @@ listen($("ai-run"), "click", async () => {
   const id = log.id;
   const method = $("ai-method").value;
   if (method !== "copy" && !window.confirm("將此 Job 的提示詞和相關 log 送往" + (method === "opencode" ? " OpenCode" : "自訂端點") + "？")) return;
-  const { result } = await api("/jobs/" + id + "/ai", "POST", { method, ...logScopePayload() });
+  let result;
+  try {
+    ({ result } = await api("/jobs/" + id + "/ai", "POST", { method, ...logScopePayload() }));
+  } catch (error) {
+    refreshStaleErrorLine(error);
+    throw error;
+  }
   if (method === "copy") {
     if (log.id !== id) return;
     try {
@@ -551,7 +566,13 @@ listen($("ai-error-next"), "click", () => loadAiErrors(aiErrorPage.index + (aiEr
 listen($("ai-preview"), "click", async () => {
   const id = log.id;
   const version = aiPreviewVersion;
-  const { result } = await api("/jobs/" + id + "/ai", "POST", { method: "copy", preview: true, ...logScopePayload() });
+  let result;
+  try {
+    ({ result } = await api("/jobs/" + id + "/ai", "POST", { method: "copy", preview: true, ...logScopePayload() }));
+  } catch (error) {
+    refreshStaleErrorLine(error);
+    throw error;
+  }
   if (log.id !== id || version !== aiPreviewVersion) return;
   $("ai-preview-text").value = result.prompt;
   $("ai-preview-meta").textContent = "（" + result.prompt.length.toLocaleString() + " 字元）";

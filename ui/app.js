@@ -230,11 +230,12 @@ async function controlJob(row, action) {
   pendingJobActions.add(row.id);
   updateLogJobControls();
   try {
-    const { result } = await api("/jobs/" + row.id + "/" + action, "POST", { confirm: true });
+    const { result, warnings } = await api("/jobs/" + row.id + "/" + action, "POST", { confirm: true });
     await syncJobs();
     if (restarting) {
       openLog(result.id);
-      announce("已建立重新建置的 Job。");
+      const shared = (warnings || []).some((warning) => warning.code === "SHARED_GIT_DIR");
+      announce(shared ? "已建立重新建置的 Job（警告：有 Workspaces 共用同一 Git repo）。" : "已建立重新建置的 Job。");
     } else {
       announce(result.state === "stopped" ? "已停止 Job。" : "Job 已結束。");
     }

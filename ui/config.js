@@ -526,7 +526,7 @@ function artifactSelectPatterns(sourceDir, selectText) {
     throw new Error("Build 產出資料夾必須是 Workspace 內的相對路徑。");
   }
   const patterns = folder
-    ? selectText.split(/\r?\n/).map((line) => line.trimEnd()).filter((line) => line.trim())
+    ? selectText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
     : lineValues(selectText);
   return patterns.map((pattern) => {
     const relative = pattern.replaceAll("\\", "/");
@@ -606,7 +606,8 @@ listen($("new-artifact"), "click", () => {
 listen($("load-bios-artifact-example"), "click", () => {
   const example = recordById(configuration.artifacts, builtinBiosArtifactId);
   if (!example) throw new Error("找不到內建的 BIOS ROM 打包範例。");
-  const name = artifactDraft?.builtIn ? example.name + " 複本" : example.name;
+  // Always copy with a suffix so a user rule never shows the built-in's name.
+  const name = example.name + " 複本";
   $("edit-artifact").value = "";
   setArtifactDraft({ name, rules: example.rules });
   $("artifact-name").focus();

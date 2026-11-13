@@ -381,6 +381,7 @@ def stop(data, job_id):
 
 
 def restart(data, job_id):
+    """Re-run the saved plan as a new job; returns (replacement row, warnings)."""
     snapshot = get_job(data, job_id)
     # Read the checkout without blocking other jobs while Git answers.
     git = (workspaces.git_state(snapshot["workspacePath"], include_dirty=False)
@@ -391,7 +392,7 @@ def restart(data, job_id):
         if replacement_id:
             folder = job_dir(data, replacement_id)
             if (folder / "status.json").is_file():
-                return get_job(data, replacement_id)
+                return get_job(data, replacement_id), []
             if not (folder / "status.pending.json").is_file():
                 replacement_id = None
         if not replacement_id and original["state"] not in RESTARTABLE:
@@ -402,8 +403,13 @@ def restart(data, job_id):
         limit(data)
         peers = [row for row in list_jobs(data) if row["id"] != job_id]
         recover_dead(data, peers)
+        if not replacement_id and git is None:
+            # Rare race: the state turned restartable while the lock was held.
+            # Re-reading git inside the lock is the trade for keeping the
+            # common path lock-free.
+            git = workspaces.git_state(original["workspacePath"], include_dirty=False)
         git_common = git["gitCommonDir"] if git else original.get("gitCommonDir")
-        check_conflicts(data, original["workspacePath"], git_common, rows=peers)
+        warnings = check_conflicts(data, original["workspacePath"], git_common, rows=peers)
 
         if not replacement_id:
             plan = read_json(job_dir(data, job_id) / "plan.json")
@@ -431,7 +437,7 @@ def restart(data, job_id):
             stop_active_job(data, original)
         os.replace(pending, pending.with_name("status.json"))
         dispatch(data)
-        return get_job(data, replacement_id)
+        return get_job(data, replacement_id), warnings
 
 
 def wait(data, job_id):

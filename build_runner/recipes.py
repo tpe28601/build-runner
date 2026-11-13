@@ -20,11 +20,23 @@ BUILTIN_IDS = {builtin_id for builtin_id, _ in BUILTIN_RECIPES}
 
 def builtin_recipe(record_id=BUILTIN_ID):
     sample = dict(BUILTIN_RECIPES)[record_id]
-    return {**read_json(ROOT / "examples" / sample), "id": record_id, "builtIn": True}
+    config = read_json(ROOT / "examples" / sample)
+    if config is None:
+        raise ToolError("RECIPE_NOT_FOUND", f"Built-in recipe sample is missing: {sample}")
+    if not isinstance(config, dict):
+        raise ToolError("INVALID_RECIPE", f"Built-in recipe sample is invalid: {sample}")
+    return {**config, "id": record_id, "builtIn": True}
 
 
 def builtin_recipes():
-    return [builtin_recipe(builtin_id) for builtin_id, _ in BUILTIN_RECIPES]
+    rows = []
+    for builtin_id, _ in BUILTIN_RECIPES:
+        try:
+            rows.append(builtin_recipe(builtin_id))
+        except ToolError:
+            # A missing or broken sample drops that entry instead of failing the list.
+            continue
+    return rows
 
 
 def list_recipes(data):
@@ -34,9 +46,8 @@ def list_recipes(data):
 def get_recipe(data, name):
     if name in BUILTIN_IDS:
         return builtin_recipe(name)
-    for builtin in builtin_recipes():
-        if builtin["name"].casefold() == name.casefold():
-            return builtin
+    # User files win over built-in display names so a same-named custom recipe
+    # is never shadowed; built-ins stay reachable through their @builtin: IDs.
     path = named_file(data, "recipes", name)
     recipe = read_json(path)
     if recipe is None:
@@ -46,6 +57,9 @@ def get_recipe(data, name):
                 recipe = record
                 break
     if recipe is None:
+        for builtin in builtin_recipes():
+            if str(builtin.get("name", "")).casefold() == name.casefold():
+                return builtin
         raise ToolError("RECIPE_NOT_FOUND", f"Recipe not found: {name}")
     if not isinstance(recipe, dict) or not isinstance(recipe.get("steps"), list):
         raise ToolError("INVALID_RECIPE", "Recipe must contain a list of steps.")

@@ -78,8 +78,10 @@ def normalize(config):
 
 
 def builtin_rom_rule():
-    config = normalize(read_json(ROOT / "examples" / "artifacts-bios-rom-sample.json"))
-    return {**config, "id": BUILTIN_ROM_ID, "builtIn": True}
+    config = read_json(ROOT / "examples" / "artifacts-bios-rom-sample.json")
+    if not isinstance(config, dict):
+        raise ToolError("ARTIFACT_RULE_NOT_FOUND", "Built-in artifact sample is missing.")
+    return {**normalize(config), "id": BUILTIN_ROM_ID, "builtIn": True}
 
 
 def load(data, name):

@@ -143,7 +143,12 @@ class Api:
             return self.update_conflicts(body)
         if path == "/api/artifact-rules":
             if method == "GET":
-                return ok([artifacts.builtin_rom_rule(), *config_records(self.data, "artifacts")])
+                try:
+                    builtin = [artifacts.builtin_rom_rule()]
+                except ToolError:
+                    # A missing sample drops the entry instead of failing the list.
+                    builtin = []
+                return ok([*builtin, *config_records(self.data, "artifacts")])
             if artifacts.BUILTIN_ROM_ID in (body.get("id"), body.get("name")):
                 raise HttpError(400, "BUILTIN_ARTIFACT_READ_ONLY", "內建產出物規則請先複製再編輯。")
             return self.config_route(method, body, "artifacts", artifacts.normalize)
@@ -600,7 +605,8 @@ class Api:
             return ok(jobs.stop(self.data, job_id))
         if method == "POST" and action == "restart":
             confirm(body)
-            return ok(jobs.restart(self.data, job_id), 201)
+            row, warnings = jobs.restart(self.data, job_id)
+            return ok(row, 201, warnings=warnings)
         if method == "POST" and action == "enter":
             if row["state"] != "running":
                 raise HttpError(409, "JOB_NOT_RUNNING", "Job 不是執行中，無法送 Enter。")

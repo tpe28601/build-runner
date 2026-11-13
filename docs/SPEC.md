@@ -82,7 +82,7 @@ Dev-Toolbox 第四個工具：管理多個程式碼資料夾、用可自訂的�
 }
 ```
 
-- 內建 Recipe 可複製成可編輯的自訂流程。「Clean + Build」執行 `builda.bat -cleanall` 和 `builda.bat -r`。「Clean + Build (-nou)」的兩步都加 `-nou`。「Clean + Build + Package」在兩個 `-nou` 步驟成功後套用內建 BIOS ROM 打包規則。
+- 內建 Recipe 可複製成可編輯的自訂流程。「Clean + Build」執行 `builda.bat -cleanall` 和 `builda.bat -r`。「Clean + Build (-nou)」的兩步都加 `-nou`。「Clean + Build + Package」在兩個 `-nou` 步驟成功後套用內建 BIOS ROM 打包規則。內建 Recipe 與內建產出物規則唯讀（`@builtin:` ID 的 POST/DELETE 回 400），範例檔缺損時清單自動省略該項。依名稱查詢時使用者檔案優先，只有找不到同名使用者檔才比對內建顯示名，自訂 Recipe 不會被內建遮蔽。
 - 每個步驟在 Workspace 根目錄執行（可另設子資料夾 `cwd`）。
 - `.bat`／`.cmd` 用 `["cmd.exe", "/d", "/c", ...argv]` 執行；其他直接用 argv。不經 shell 字串拼接。
 - 步驟失敗就停（除非 `continueOnFail`）。
@@ -206,15 +206,15 @@ exit code 照 TOOL-SPEC（0 成功、1 失敗、3 參數錯、4 取消、5 環�
 | `POST /api/workspaces/<id>/git` | `{ action: refresh|pull|checkout, branch }` |
 | `GET/POST/DELETE /api/paramsets`、`POST /api/paramsets/import` | 參數表 |
 | `GET/POST/DELETE /api/recipes` | Recipe |
-| `GET/POST/DELETE /api/artifact-rules`、`POST /api/artifact-rules/preview` | 產出物規則 |
+| `GET/POST/DELETE /api/artifact-rules`、`POST /api/artifact-rules/preview` | 產出物規則（GET 第一筆為唯讀內建 `@builtin:bios-rom-package`） |
 | `POST /api/jobs/check` | 建立前檢查衝突，回傳警告清單 |
 | `POST /api/jobs` | 建立 Job（可多個 Workspace） |
 | `GET /api/jobs`、`GET /api/jobs/<id>` | 列表／狀態 |
 | `GET /api/jobs/<id>/log?from=<offset>` | 增量 log；`?download=1` 下載 `.log` 檔 |
 | `GET /api/jobs/<id>/search?q=&kind=error|fail|warning` | 搜尋 |
-| `GET /api/jobs/<id>/triage`、`POST /api/jobs/<id>/ai` | 判讀／AI 分析（ai POST 可帶 `logScope`/`logStart`/`logEnd`，`preview: true` 只回提示詞；AI 功能開關關閉時 POST 回 409 `AI_DISABLED`） |
+| `GET /api/jobs/<id>/triage`、`POST /api/jobs/<id>/ai` | 判讀／AI 分析（ai POST 可帶 `logScope`/`logStart`/`logEnd`，`around` 另可帶 `logErrorLine`/`logBefore`/`logAfter`，`preview: true` 只回提示詞；AI 功能開關關閉時 POST 回 409 `AI_DISABLED`） |
 | `POST /api/jobs/<id>/stop` | 停止 |
-| `POST /api/jobs/<id>/restart` | 讓執行中、排隊中、已停止或失敗的 Job 從原執行計畫第一步重新建置，需 `confirm: true` |
+| `POST /api/jobs/<id>/restart` | 讓執行中、排隊中、已停止或失敗的 Job 從原執行計畫第一步重新建置，需 `confirm: true`；新 Job 以 `restartedFrom`／`restartedAs` 與原 Job 互連，重複呼叫冪等回傳同一新 Job。若新 Job 發布前中断，暫存檔由 orphan 清理（≤24 小時），重新按「重新建置」會重建 |
 | `POST /api/jobs/<id>/enter` | 對執行中 Job 送一次 Enter（非執行中回 409，不需 confirm） |
 | `GET /api/history`、`POST /api/history/export`、`POST /api/history/delete` | 歷史（delete 要 `confirm: true`） |
 | `GET/POST/DELETE /api/schedules` | 排程 |
