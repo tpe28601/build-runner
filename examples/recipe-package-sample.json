@@ -1,0 +1,10 @@
+{
+  "name": "Clean + Build + Package",
+  "steps": [
+    { "name": "Clean", "argv": ["builda.bat", "-cleanall", "-nou"], "continueOnFail": false },
+    { "name": "Build", "argv": ["builda.bat", "-r", "-nou"], "useParams": true }
+  ],
+  "env": {},
+  "timeoutMin": 180,
+  "artifacts": "@builtin:bios-rom-package"
+}

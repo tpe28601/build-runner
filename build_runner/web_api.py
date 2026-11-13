@@ -64,7 +64,7 @@ def tool_error(exc):
     status = 400
     if exc.code.endswith("_NOT_FOUND"):
         status = 404
-    elif exc.code in ("JOB_BUSY", "WORKSPACE_CONFLICT", "WORKSPACE_EXISTS"):
+    elif exc.code in ("JOB_BUSY", "JOB_NOT_ACTIVE", "WORKSPACE_CONFLICT", "WORKSPACE_EXISTS"):
         status = 409
     elif exc.exit_code in (1, 5):
         status = 500
@@ -142,6 +142,10 @@ class Api:
         if method == "POST" and path == "/api/paramsets/conflicts":
             return self.update_conflicts(body)
         if path == "/api/artifact-rules":
+            if method == "GET":
+                return ok([artifacts.builtin_rom_rule(), *config_records(self.data, "artifacts")])
+            if artifacts.BUILTIN_ROM_ID in (body.get("id"), body.get("name")):
+                raise HttpError(400, "BUILTIN_ARTIFACT_READ_ONLY", "內建產出物規則請先複製再編輯。")
             return self.config_route(method, body, "artifacts", artifacts.normalize)
         if method == "POST" and path == "/api/artifact-rules/preview":
             return self.preview_artifacts(body)
@@ -594,6 +598,9 @@ class Api:
         if method == "POST" and action == "stop":
             confirm(body)
             return ok(jobs.stop(self.data, job_id))
+        if method == "POST" and action == "restart":
+            confirm(body)
+            return ok(jobs.restart(self.data, job_id), 201)
         if method == "POST" and action == "enter":
             if row["state"] != "running":
                 raise HttpError(409, "JOB_NOT_RUNNING", "Job 不是執行中，無法送 Enter。")
@@ -635,7 +642,20 @@ class Api:
                         raise HttpError(400, "INVALID_LOG_RANGE", f"{field} 必須是正整數。")
                     bounds.append(value)
                 try:
-                    prompt = ai.prompt_for(row, path, config["template"], scope, *bounds)
+                    options = {}
+                    if scope == "around":
+                        for field, key, minimum, maximum in (
+                            ("logErrorLine", "error_line", 1, 2**53 - 1),
+                            ("logBefore", "before", 0, 1000),
+                            ("logAfter", "after", 0, 1000),
+                        ):
+                            if field not in body:
+                                continue
+                            value = body[field]
+                            if type(value) is not int or not minimum <= value <= maximum:
+                                raise ToolError("INVALID_LOG_RANGE", f"{field} 必須是 {minimum} 到 {maximum} 的整數。")
+                            options[key] = value
+                    prompt = ai.prompt_for(row, path, config["template"], scope, *bounds, **options)
                 except ToolError as exc:
                     raise HttpError(400, exc.code, str(exc)) from exc
                 if body.get("preview") is True:

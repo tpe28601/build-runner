@@ -11,9 +11,10 @@ import stat
 import tempfile
 import zipfile
 
-from .paths import ToolError, named_file, read_json
+from .paths import ROOT, ToolError, named_file, read_json
 
 MAX_FILES = 10000
+BUILTIN_ROM_ID = "@builtin:bios-rom-package"
 VARIABLE = re.compile(r"\{([^{}]+)\}")
 UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 DEVICES = re.compile(r"^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$", re.I)
@@ -76,7 +77,14 @@ def normalize(config):
     return {"name": name, "rules": rows}
 
 
+def builtin_rom_rule():
+    config = normalize(read_json(ROOT / "examples" / "artifacts-bios-rom-sample.json"))
+    return {**config, "id": BUILTIN_ROM_ID, "builtIn": True}
+
+
 def load(data, name):
+    if name == BUILTIN_ROM_ID:
+        return builtin_rom_rule()
     source = read_json(named_file(data, "artifacts", name))
     if source is None:
         raise ToolError("ARTIFACT_RULE_NOT_FOUND", f"Artifact rule not found: {name}")

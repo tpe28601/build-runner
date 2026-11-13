@@ -82,7 +82,7 @@ Dev-Toolbox 第四個工具：管理多個程式碼資料夾、用可自訂的�
 }
 ```
 
-- 內建 Recipe 有兩個（唯讀，`@builtin:clean-build`／`@builtin:clean-build-nou`）：「Clean + Build」先 `builda.bat -cleanall` 再跑 `builda.bat -r`；「Clean + Build (-nou)」兩步驟同前但各加 `-nou`。兩者的 Clean 步驟都要求 Workspace 根目錄有 `builda.bat`。使用者 Recipe 的步驟可新增、刪除、排序、停用。
+- 內建 Recipe 可複製成可編輯的自訂流程。「Clean + Build」執行 `builda.bat -cleanall` 和 `builda.bat -r`。「Clean + Build (-nou)」的兩步都加 `-nou`。「Clean + Build + Package」在兩個 `-nou` 步驟成功後套用內建 BIOS ROM 打包規則。
 - 每個步驟在 Workspace 根目錄執行（可另設子資料夾 `cwd`）。
 - `.bat`／`.cmd` 用 `["cmd.exe", "/d", "/c", ...argv]` 執行；其他直接用 argv。不經 shell 字串拼接。
 - 步驟失敗就停（除非 `continueOnFail`）。
@@ -214,6 +214,7 @@ exit code 照 TOOL-SPEC（0 成功、1 失敗、3 參數錯、4 取消、5 環�
 | `GET /api/jobs/<id>/search?q=&kind=error|fail|warning` | 搜尋 |
 | `GET /api/jobs/<id>/triage`、`POST /api/jobs/<id>/ai` | 判讀／AI 分析（ai POST 可帶 `logScope`/`logStart`/`logEnd`，`preview: true` 只回提示詞；AI 功能開關關閉時 POST 回 409 `AI_DISABLED`） |
 | `POST /api/jobs/<id>/stop` | 停止 |
+| `POST /api/jobs/<id>/restart` | 讓執行中、排隊中、已停止或失敗的 Job 從原執行計畫第一步重新建置，需 `confirm: true` |
 | `POST /api/jobs/<id>/enter` | 對執行中 Job 送一次 Enter（非執行中回 409，不需 confirm） |
 | `GET /api/history`、`POST /api/history/export`、`POST /api/history/delete` | 歷史（delete 要 `confirm: true`） |
 | `GET/POST/DELETE /api/schedules` | 排程 |
@@ -226,13 +227,14 @@ TOOL-SPEC 寫「同一時間只允許一個會寫入的工作」：本工具的 
 
 | 分頁 | 內容 |
 | --- | --- |
-| 總覽 | 正在跑／排隊的 Job 卡片（進度、步驟、耗時、停止鈕），最近結果 |
+| 總覽 | 正在跑／排隊的 Job 卡片（進度、步驟、耗時、停止和重新建置），最近結果 |
 | Workspace | 資料夾清單、git 狀態、新增／匯入 worktree、勾選後「開始 build」 |
 | Build | 選 Workspace（多選）＋ Recipe ＋ 參數（分組勾選＋說明＋搜尋＋指令預覽）→ 衝突檢查 → 開始 |
 | Log | 選 Job，即時 log、error／fail／warning 快速搜尋、判讀摘要、AI 分析（功能開關關閉時隱藏）、偵測到輸入提示時顯示「按 Enter 繼續」 |
 | 流程設定 | Recipe、參數表匯入、preset、產出物規則（含預覽） |
 | 歷史 | 表格、篩選、匯出、勾選刪除 |
-| 設定 | 同時數量、互動提示（autoSkipPrompts）、AI（功能開關預設關、送法 OpenCode／自訂端點／複製）、通知、排程、保留規則 |
+| 工作排程 | 新增、啟用、停用或刪除每日或每週的 Windows 排程 |
+| 設定 | 互動提示（autoSkipPrompts）、AI（功能開關預設關、送法 OpenCode／自訂端點／複製）、通知、保留規則 |
 
 圖標用 Lucide（`tb-icons.js`），顏色只用 `--tb-*` token，支援 `?embedded=1`，400px 寬不破版。
 

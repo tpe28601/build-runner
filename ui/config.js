@@ -8,6 +8,7 @@ let recipeTemplateCommand;
 let artifactDraft;
 let artifactPreview = null;
 let artifactDirty = false;
+const builtinBiosArtifactId = "@builtin:bios-rom-package";
 
 async function loadConfiguration() {
   const [recipes, tables, artifacts] = await Promise.all(
@@ -284,7 +285,10 @@ function editStep(step) {
 
 function defaultRecipe(name = "", source = null) {
   const basis = source || configuration.recipes.find((recipe) => recipe.builtIn);
-  return { name, timeoutMin: basis?.timeoutMin ?? 180, env: {}, steps: basis?.steps || [] };
+  return {
+    name, timeoutMin: basis?.timeoutMin ?? 180, env: source?.env || {}, steps: basis?.steps || [],
+    paramset: source?.paramset, artifacts: source?.artifacts,
+  };
 }
 
 function setRecipeDraft(record) {
@@ -295,10 +299,15 @@ function setRecipeDraft(record) {
   const preview = $("builtin-recipe-preview");
   preview.hidden = !record.builtIn;
   if (record.builtIn) {
+    const packaging = recordById(configuration.artifacts, record.artifacts);
     preview.replaceChildren(
       element("p", "tb-muted", "內建範例，先清理再建置。執行前請確認 Workspace 根目錄有 builda.bat。"),
       ...record.steps.flatMap((step) => [element("strong", "", step.name),
         element("pre", "preview-command", JSON.stringify(step.argv))]),
+    );
+    if (packaging) preview.append(
+      element("strong", "", "Package"),
+      element("p", "tb-muted", "建置成功後套用「" + packaging.name + "」。請先複製 Recipe，再依 Workspace 調整工作子資料夾及產出物規則。"),
     );
     return;
   }
@@ -368,7 +377,8 @@ listen($("new-recipe"), "click", () => {
 });
 listen($("copy-builtin-recipe"), "click", () => {
   $("edit-recipe").value = "";
-  setRecipeDraft(defaultRecipe(recipeDraft.name + " 複本", recipeDraft));
+  const name = recipeDraft.name.replace(/[+()]/g, "").replace(/ {2,}/g, " ");
+  setRecipeDraft(defaultRecipe(name + " 複本", recipeDraft));
   $("recipe-name").focus();
 });
 $("recipe-table").addEventListener("change", () => {
@@ -494,13 +504,47 @@ function defaultArtifact() {
   return { name: "", rules: [defaultArtifactRule()] };
 }
 
-function setArtifactDraft(record) {
-  artifactDraft = { ...record, rules: (record.rules || []).map((rule) => ({
-    ...rule, selectText: (rule.select || []).join("\n"), excludeText: (rule.exclude || []).join("\n"),
+function editArtifactRule(rule) {
+  const patterns = (rule.select || []).map((pattern) => pattern.split("/"));
+  const folder = [];
+  for (const [index, segment] of (patterns[0] || []).slice(0, -1).entries()) {
+    if (/[*?\[]/.test(segment) || !patterns.every((parts) => index < parts.length - 1 && parts[index] === segment)) break;
+    folder.push(segment);
+  }
+  return {
+    ...rule,
+    sourceDir: folder.join("/"),
+    selectText: patterns.map((parts) => parts.slice(folder.length).join("/")).join("\n"),
+    excludeText: (rule.exclude || []).join("\n"),
     zip: { ...defaultArtifactRule().zip, ...rule.zip },
-  })) };
+  };
+}
+
+function artifactSelectPatterns(sourceDir, selectText) {
+  const folder = sourceDir.trim() ? sourceDir.replaceAll("\\", "/") : "";
+  if (folder.startsWith("/") || /[:*?\[]/.test(folder) || folder.split("/").includes("..")) {
+    throw new Error("Build 產出資料夾必須是 Workspace 內的相對路徑。");
+  }
+  const patterns = folder
+    ? selectText.split(/\r?\n/).map((line) => line.trimEnd()).filter((line) => line.trim())
+    : lineValues(selectText);
+  return patterns.map((pattern) => {
+    const relative = pattern.replaceAll("\\", "/");
+    if (relative.startsWith("/") || relative.includes(":") || relative.split("/").includes("..")) {
+      throw new Error("檔名或 Glob 必須相對於 Build 產出資料夾。");
+    }
+    return [folder, relative].filter(Boolean).join("/");
+  });
+}
+
+function setArtifactDraft(record) {
+  artifactDraft = { ...record, rules: (record.rules || []).map(editArtifactRule) };
   $("artifact-name").value = record.name;
-  $("remove-artifact").disabled = !record.id;
+  $("artifact-name").disabled = !!record.builtIn;
+  $("remove-artifact").disabled = !record.id || !!record.builtIn;
+  $("add-artifact-rule").disabled = !!record.builtIn;
+  $("artifact-form").querySelector('button[type="submit"]').disabled = !!record.builtIn;
+  $("load-bios-artifact-example").textContent = record.builtIn ? "複製 BIOS ROM 範例" : "載入 BIOS ROM 範例";
   artifactDirty = false;
   clearArtifactPreview();
   renderArtifactRules();
@@ -514,16 +558,18 @@ function markArtifactDirty() {
 function renderArtifactRules() {
   const rows = artifactDraft.rules.map((rule, index) => {
     const item = element("fieldset", "editor-item stack");
+    item.disabled = !!artifactDraft.builtIn;
     item.append(element("legend", "", "規則 " + (index + 1)));
     const field = (label, key, options) => editorInput(label, rule[key], (value) => {
       rule[key] = value;
       markArtifactDirty();
     }, options);
     item.append(
-      field("選取 Glob（每行一條）", "selectText", { rows: 2 }),
-      field("排除 Glob（每行一條）", "excludeText", { rows: 2 }),
+      field("Build 產出資料夾（相對 Workspace）", "sourceDir", { folder: "relative" }),
+      field("檔名或 Glob（每行一條）", "selectText", { rows: 2 }),
+      field("排除 Glob（相對 Workspace，每行一條）", "excludeText", { rows: 2 }),
       field("改名範本", "rename"),
-      field("目的地", "dest", { folder: "absolute" }),
+      field("複製目的地", "dest", { folder: "absolute" }),
       editorCheck("另外建立 ZIP", rule.zip.enabled, (value) => {
         rule.zip.enabled = value;
         markArtifactDirty();
@@ -557,9 +603,16 @@ listen($("new-artifact"), "click", () => {
   setArtifactDraft(defaultArtifact());
   $("artifact-name").focus();
 });
+listen($("load-bios-artifact-example"), "click", () => {
+  const example = recordById(configuration.artifacts, builtinBiosArtifactId);
+  if (!example) throw new Error("找不到內建的 BIOS ROM 打包範例。");
+  const name = artifactDraft?.builtIn ? example.name + " 複本" : example.name;
+  $("edit-artifact").value = "";
+  setArtifactDraft({ name, rules: example.rules });
+  $("artifact-name").focus();
+});
 listen($("add-artifact-rule"), "click", () => {
-  const rule = defaultArtifactRule();
-  artifactDraft.rules.push({ ...rule, selectText: rule.select.join("\n"), excludeText: rule.exclude.join("\n") });
+  artifactDraft.rules.push(editArtifactRule(defaultArtifactRule()));
   markArtifactDirty();
   renderArtifactRules();
 });
@@ -574,8 +627,8 @@ listen($("artifact-form"), "submit", async () => {
   const id = artifactDraft.id || name;
   const confirm = !!recordById(configuration.artifacts, id);
   if (confirm && !window.confirm("儲存變更並覆寫這份產出物規則？")) return;
-  const rules = artifactDraft.rules.map(({ selectText, excludeText, ...rule }) => ({
-    ...rule, select: lineValues(selectText), exclude: lineValues(excludeText),
+  const rules = artifactDraft.rules.map(({ sourceDir, selectText, excludeText, ...rule }) => ({
+    ...rule, select: artifactSelectPatterns(sourceDir, selectText), exclude: lineValues(excludeText),
   }));
   await api("/artifact-rules", "POST", { id, name, rules, confirm });
   await loadConfigurationEditor({ artifact: id });

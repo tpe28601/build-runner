@@ -29,14 +29,17 @@
     <a class="tb-tab" href="#log"><i data-tb-icon="terminal"></i>Log</a>
     <a class="tb-tab" href="#history"><i data-tb-icon="history"></i>歷史</a>
     <a class="tb-tab" href="#recipes"><i data-tb-icon="git-branch"></i>流程設定</a>
+    <a class="tb-tab" href="#schedules"><i data-tb-icon="bookmark"></i>工作排程</a>
     <a class="tb-tab" href="#settings"><i data-tb-icon="settings"></i>設定</a>
+    <button id="page-help-trigger" class="tb-btn tool-tabs__help" type="button" aria-haspopup="dialog" aria-controls="page-help"><i data-tb-icon="circle-help"></i>功能說明</button>
   </nav>
 
   <div class="shell">
     <main>
       <section id="overview">
         <div class="page-head">
-          <div><p class="kicker">JOB QUEUE</p><h1>總覽</h1><p>查看本機建置進度、排隊與最近結果。</p></div>
+          <h1 class="tb-sr-only">總覽</h1>
+          <div><h1 class="tb-sr-only">Workspace</h1><p>查看 Build runner 狀態。</p></div>
           <a class="tb-btn tb-btn--primary" href="#build"><i data-tb-icon="play"></i>新增 Build</a>
         </div>
         <div class="metrics">
@@ -58,7 +61,7 @@
 
       <section id="workspaces" hidden>
         <div class="page-head">
-          <div><p class="kicker">WORKSPACES</p><h1>Workspace</h1><p>登錄本機資料夾並查看 Git 狀態。</p></div>
+          <div><h1 class="tb-sr-only">Workspace</h1><p>登錄本機資料夾並查看 Git 狀態。</p></div>
           <button id="workspace-build" class="tb-btn tb-btn--primary" disabled><i data-tb-icon="play"></i>用選取項目開始 Build</button>
         </div>
         <div class="columns">
@@ -82,12 +85,12 @@
       </section>
 
       <section id="build" hidden>
-        <div class="page-head"><div><p class="kicker">NEW JOB</p><h1>Build</h1><p>選擇 Workspace 與 Recipe，檢查指令後開始建置。</p></div></div>
+        <div class="page-head"><div><h1 class="tb-sr-only">Build</h1><p>選擇 Workspace 與 Recipe，檢查指令後開始建置。</p></div></div>
         <div class="columns">
           <form id="build-form" class="tb-card stack">
             <fieldset>
               <legend>1. 選擇 Workspace</legend>
-              <div id="build-workspaces" class="stack"></div>
+              <div id="build-workspaces" class="build-workspace-grid"></div>
             </fieldset>
             <label class="tb-field"><span class="tb-field__label build-label">2. 選擇 Recipe</span><select id="recipe" class="tb-select" required></select></label>
             <fieldset id="build-parameters" class="stack" hidden>
@@ -111,10 +114,14 @@
       </section>
 
       <section id="log" hidden>
-        <div class="page-head"><div><p class="kicker">BUILD OUTPUT</p><h1>Log</h1><p>即時查看輸出、搜尋錯誤並跳到相關行。</p></div><span id="log-state" class="tb-badge">尚未選擇 Job</span></div>
+        <h1 class="tb-sr-only">Log</h1>
         <div class="tb-card log-card stack">
-          <label class="tb-field"><span class="tb-field__label">Job</span><select id="log-job" class="tb-select"></select></label>
-          <div id="triage" class="triage" hidden></div>
+          <div class="row log-job-controls">
+            <label class="tb-field"><span class="tb-field__label">Job</span><select id="log-job" class="tb-select"></select></label>
+            <span id="log-state" class="tb-badge">尚未選擇 Job</span>
+            <button id="log-stop-job" class="tb-btn tb-btn--icon tb-btn--danger" type="button" title="停止建置" aria-label="停止建置" hidden><i data-tb-icon="square"></i></button>
+            <button id="log-restart-job" class="tb-btn tb-btn--icon" type="button" title="重新建置" aria-label="重新建置" hidden><i data-tb-icon="refresh-cw"></i></button>
+          </div>
           <div id="enter-banner" class="enter-banner" hidden><span>偵測到輸入提示，建置正在等待按 Enter。</span><button id="enter-send" class="tb-btn tb-btn--primary" type="button">按 Enter 繼續</button></div>
           <div class="row log-search">
             <label class="tb-field search-field"><span class="tb-field__label">關鍵字</span><input type="search" id="log-query" class="tb-input" placeholder="例如 C2065"></label>
@@ -134,6 +141,7 @@
             <button id="back-live" class="tb-btn" type="button" hidden>回到即時輸出</button>
             <a id="log-download" class="tb-btn" href="#" hidden>下載 .log</a>
           </div>
+          <div id="triage" class="triage" hidden></div>
           <div id="log-output" class="log-output" tabindex="0" role="region" aria-label="Build log"><div id="live-lines"></div><div id="archive-lines" hidden></div></div>
           <p id="log-footer" class="tb-small tb-muted">選擇 Job 即可查看輸出。</p>
         </div>
@@ -145,7 +153,7 @@
             </label>
             <label class="tb-field search-field"><span class="tb-field__label">Log 範圍</span>
               <select id="ai-scope" class="tb-select">
-                <option value="around" selected>錯誤附近（±40 行）</option>
+                <option value="around" selected>錯誤附近</option>
                 <option value="tail">尾端 200 行</option>
                 <option value="full">完整 log（自動截尾）</option>
                 <option value="range">自訂起訖行號</option>
@@ -157,6 +165,16 @@
             <button id="ai-preview" type="button" class="tb-btn" disabled>預覽提示詞</button>
             <button id="ai-cancel" type="button" class="tb-btn" hidden>取消分析</button>
           </div>
+          <fieldset id="ai-error-fields" class="row" hidden>
+            <label class="tb-field search-field"><span class="tb-field__label">錯誤行</span><select id="ai-error-line" class="tb-select"><option value="">自動選取根本錯誤</option></select></label>
+            <label class="tb-field ai-range-field"><span class="tb-field__label">前幾行</span><input id="ai-log-before" class="tb-input" type="number" min="0" max="1000" step="1" value="40"></label>
+            <label class="tb-field ai-range-field"><span class="tb-field__label">後幾行</span><input id="ai-log-after" class="tb-input" type="number" min="0" max="1000" step="1" value="40"></label>
+            <div class="row" id="ai-error-pages" hidden>
+              <button id="ai-error-prev" class="tb-btn" type="button">上一頁錯誤</button>
+              <button id="ai-error-next" class="tb-btn" type="button">下一頁錯誤</button>
+              <span id="ai-error-count" class="tb-small tb-muted" role="status"></span>
+            </div>
+          </fieldset>
           <label id="ai-preview-field" class="tb-field" hidden><span class="tb-field__label">提示詞預覽<span id="ai-preview-meta" class="tb-small tb-muted"></span></span><textarea id="ai-preview-text" class="tb-textarea tb-input--mono" rows="8" readonly></textarea></label>
           <p id="ai-status" role="status" class="tb-muted">選擇已結束的 Job。</p>
           <label id="ai-saved-field" class="tb-field" hidden><span class="tb-field__label">已儲存的分析</span><select id="ai-saved" class="tb-select"></select></label>
@@ -165,7 +183,7 @@
       </section>
 
       <section id="history" hidden>
-        <div class="page-head"><div><p class="kicker">BUILD HISTORY</p><h1>歷史</h1><p>回看建置結果與根本錯誤。</p></div></div>
+        <h1 class="tb-sr-only">歷史</h1>
         <div class="tb-card stack operation-card">
           <form id="history-filter" class="operation-grid">
             <label class="tb-field"><span class="tb-field__label">Workspace</span><select name="workspace" id="history-workspace" class="tb-select"><option value="">全部</option></select></label>
@@ -176,7 +194,7 @@
             <button type="reset" class="tb-btn">清除篩選</button>
           </form>
           <div class="row">
-            <label class="check"><input type="checkbox" id="history-all"><span>全選顯示結果</span></label>
+            <label class="check"><input type="checkbox" id="history-all"><span>全選</span></label>
             <span id="history-selected" class="tb-muted">已選 0 筆</span>
             <button id="history-csv" class="tb-btn" type="button">匯出 CSV</button>
             <button id="history-json" class="tb-btn" type="button">匯出 JSON</button>
@@ -187,7 +205,7 @@
       </section>
 
       <section id="recipes" hidden>
-        <div class="page-head"><div><p class="kicker">BUILD CONFIGURATION</p><h1>流程設定</h1><p>編輯 Recipe、參數表與建置產出物規則。</p></div></div>
+        <h1 class="tb-sr-only">流程設定</h1>
         <div class="tb-tabs" role="group" aria-label="流程設定分類">
           <button class="tb-tab is-active" type="button" data-config="recipe-editor" aria-pressed="true">Recipe</button>
           <button class="tb-tab" type="button" data-config="parameter-editor" aria-pressed="false">參數表與 preset</button>
@@ -238,7 +256,11 @@
           <form id="artifact-form" class="tb-card stack">
             <h2>產出物規則</h2>
             <label class="tb-field"><span class="tb-field__label">已儲存的規則組</span><select id="edit-artifact" class="tb-select"></select></label>
-            <div class="row"><button id="new-artifact" class="tb-btn" type="button">新建規則組</button><button id="remove-artifact" class="tb-btn" type="button" disabled>刪除規則組</button></div>
+            <div class="row">
+              <button id="new-artifact" class="tb-btn" type="button">新建規則組</button>
+              <button id="load-bios-artifact-example" class="tb-btn" type="button">載入 BIOS ROM 範例</button>
+              <button id="remove-artifact" class="tb-btn" type="button" disabled>刪除規則組</button>
+            </div>
             <label class="tb-field"><span class="tb-field__label">規則組名稱</span><input id="artifact-name" class="tb-input" placeholder="sample-output" required></label>
             <div id="artifact-rules" class="stack"></div>
             <div class="row"><button id="add-artifact-rule" class="tb-btn" type="button">新增規則</button><button class="tb-btn tb-btn--primary" type="submit">儲存規則組</button></div>
@@ -254,7 +276,7 @@
         </div>
       </section>
       <section id="settings" hidden>
-        <div class="page-head"><div><p class="kicker">PREFERENCES</p><h1>設定</h1><p>管理歷史保留、通知、AI 與 Windows 工作排程。</p></div></div>
+        <h1 class="tb-sr-only">設定</h1>
         <div class="columns">
           <div class="stack">
             <form id="retention-form" class="tb-card stack">
@@ -274,32 +296,39 @@
             </form>
             <form id="prompts-form" class="tb-card stack">
               <h2>互動提示</h2>
-              <p class="tb-muted">Build 停在帳號、密碼或 passphrase 提示時自動送 Enter 讓它略過；Log 頁的「按 Enter 繼續」與 Job 的「送 Enter」按鈕不受此設定影響。</p>
+              <p class="tb-muted">Build 過程停在帳號、密碼或 passphrase 提示時自動略過。</p>
               <label class="check"><input id="auto-skip-prompts" type="checkbox"><span>偵測到提示且輸出停止時自動送 Enter</span></label>
               <button type="submit" class="tb-btn">儲存提示設定</button>
             </form>
           </div>
           <form id="ai-settings-form" class="tb-card stack">
             <h2>AI 分析設定</h2>
-            <label class="check"><input id="ai-enabled" type="checkbox"><span>啟用 AI 分析功能（預設關閉；關閉時隱藏 Log 頁與歷史頁的分析入口，API 也會拒絕分析請求）</span></label>
-            <div class="editor-fields">
-              <label class="tb-field"><span class="tb-field__label">預設分析方式</span><select id="ai-default" class="tb-select"><option value="copy">複製提示詞</option><option value="opencode">OpenCode</option><option value="endpoint">自訂端點</option></select></label>
-              <label class="tb-field"><span class="tb-field__label">逾時秒數</span><input id="ai-timeout" type="number" class="tb-input" min="1" max="900" required></label>
-            </div>
-            <label class="tb-field"><span class="tb-field__label">OpenCode 執行檔路徑</span><input id="ai-executable" class="tb-input tb-input--mono" placeholder="C:\tools\opencode.exe"></label>
-            <label class="tb-field"><span class="tb-field__label">OpenCode 參數（JSON 陣列）</span><input id="ai-args" class="tb-input tb-input--mono" placeholder="[]"></label>
-            <div class="editor-fields">
-              <label class="tb-field"><span class="tb-field__label">端點 Base URL</span><input id="ai-base" type="url" class="tb-input" placeholder="http://127.0.0.1:8000"></label>
-              <label class="tb-field"><span class="tb-field__label">模型</span><input id="ai-model" class="tb-input"></label>
-            </div>
-            <label class="tb-field"><span class="tb-field__label">API key</span><input id="ai-key" type="password" autocomplete="new-password" class="tb-input"><span id="ai-key-state" class="tb-field__hint"></span></label>
-            <label class="check"><input id="ai-clear-key" type="checkbox"><span>清除已儲存的 API key</span></label>
-            <label class="tb-field"><span class="tb-field__label">提示詞範本</span><textarea id="ai-template" class="tb-textarea tb-input--mono" rows="5" required></textarea><span class="tb-field__hint">{workspace}、{branch}、{command}、{triage}、{context}</span></label>
+            <label class="check"><input id="ai-enabled" type="checkbox" aria-controls="ai-settings-fields"><span>啟用 AI 分析功能</span></label>
+            <fieldset id="ai-settings-fields" class="stack" hidden disabled>
+              <div class="editor-fields">
+                <label class="tb-field"><span class="tb-field__label">預設分析方式</span><select id="ai-default" class="tb-select"><option value="copy">複製提示詞</option><option value="opencode">OpenCode</option><option value="endpoint">自訂端點</option></select></label>
+                <label class="tb-field"><span class="tb-field__label">逾時秒數</span><input id="ai-timeout" type="number" class="tb-input" min="1" max="900" required></label>
+              </div>
+              <label class="tb-field"><span class="tb-field__label">OpenCode 執行檔路徑</span><input id="ai-executable" class="tb-input tb-input--mono" placeholder="C:\tools\opencode.exe"></label>
+              <label class="tb-field"><span class="tb-field__label">OpenCode 參數（JSON 陣列）</span><input id="ai-args" class="tb-input tb-input--mono" placeholder="[]"></label>
+              <div class="editor-fields">
+                <label class="tb-field"><span class="tb-field__label">端點 Base URL</span><input id="ai-base" type="url" class="tb-input" placeholder="http://127.0.0.1:8000"></label>
+                <label class="tb-field"><span class="tb-field__label">模型</span><input id="ai-model" class="tb-input"></label>
+              </div>
+              <label class="tb-field"><span class="tb-field__label">API key</span><input id="ai-key" type="password" autocomplete="new-password" class="tb-input"><span id="ai-key-state" class="tb-field__hint"></span></label>
+              <label class="check"><input id="ai-clear-key" type="checkbox"><span>清除已儲存的 API key</span></label>
+              <label class="tb-field"><span class="tb-field__label">提示詞範本</span><textarea id="ai-template" class="tb-textarea tb-input--mono" rows="5" required></textarea><span class="tb-field__hint">{workspace}、{branch}、{command}、{triage}、{context}</span></label>
+            </fieldset>
             <button type="submit" class="tb-btn tb-btn--primary">儲存 AI 設定</button>
           </form>
         </div>
-        <div class="tb-card stack operation-card">
-          <h2>Windows 工作排程</h2><p class="tb-muted">以這台電腦的本機時間執行，可在 Build Runner 關閉時啟動建置。</p>
+      </section>
+      <section id="schedules" hidden>
+        <div class="page-head">
+          <div><h1 class="tb-sr-only">Windows 工作排程</h1><p>以本機時間執行，可在 Build Runner 關閉時啟動建置。</p></div>
+        </div>
+        <div class="tb-card stack">
+          <h2>新增排程</h2>
           <form id="schedule-form" class="operation-grid">
             <label class="tb-field"><span class="tb-field__label">排程名稱</span><input name="name" class="tb-input" maxlength="40" required></label>
             <label class="tb-field"><span class="tb-field__label">排程 Workspace</span><select id="schedule-workspace" name="workspace" class="tb-select" required></select></label>
@@ -309,16 +338,22 @@
             <label class="tb-field"><span class="tb-field__label">執行時間</span><input name="time" type="time" class="tb-input" required></label>
             <button type="submit" class="tb-btn tb-btn--primary">新增排程</button>
           </form>
-          <div id="schedule-list" class="stack"></div>
         </div>
+        <h2 class="section-title">已設定的排程</h2>
+        <div id="schedule-list" class="stack"></div>
       </section>
     </main>
   </div>
   <!-- 資料夾挑選改用 ui-kit tb-dirpicker.js 共用元件（DOM 由元件動態產生） -->
   <dialog id="page-help" class="tb-dialog page-help" aria-labelledby="page-help-title">
-    <h2 id="page-help-title" class="tb-dialog__title">功能說明</h2>
-    <div id="page-help-content"></div>
-    <div class="tb-dialog__actions"><form method="dialog"><button class="tb-btn tb-btn--primary" autofocus>了解</button></form></div>
+    <div class="page-help__head">
+      <h2 id="page-help-title" class="tb-dialog__title">功能說明</h2>
+      <button id="page-help-close" class="tb-btn tb-btn--icon" type="submit" form="page-help-actions" aria-label="關閉功能說明"><i data-tb-icon="x"></i></button>
+    </div>
+    <div id="page-help-content" class="page-help__body"></div>
+    <form id="page-help-actions" method="dialog" class="tb-dialog__actions page-help__foot">
+      <button class="tb-btn tb-btn--primary" type="submit" autofocus>了解</button>
+    </form>
   </dialog>
   <div class="tb-toast-area" role="status" aria-atomic="true"><div id="toast" class="tb-toast" hidden></div></div>
 </body>

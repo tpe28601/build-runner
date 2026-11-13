@@ -12,15 +12,15 @@
 ## 第一次建置
 
 1. 在 **Workspace** 新增資料夾，或選取 Git repo 後匯入 worktree。
-2. 在 **流程設定 → Recipe** 查看內建 **Clean + Build**（`builda.bat -cleanall` → `builda.bat -r`）與 **Clean + Build (-nou)**（兩步驟各加 `-nou`）。請確認 Workspace 根目錄有該批次檔，且你要先清理再建置。要使用不同的指令，按 **複製為新 Recipe** 後修改。
+2. 在 **流程設定 → Recipe** 查看內建 **Clean + Build**、**Clean + Build (-nou)** 或 **Clean + Build + Package**。打包範例會在清理與建置成功後套用 BIOS ROM 產出物規則。按 **複製為新 Recipe** 可調整 `builda.bat` 的工作子資料夾，並套用符合專案的產出物規則。
 3. 在 **Build** 選取 Workspace 和 Recipe。檢查指令與資料夾衝突後開始建置。
-4. 在 **Log** 查看即時輸出、搜尋警告或錯誤，或從 **歷史** 回看結果。每個分頁都有 **功能說明**。
+4. 建置在背景執行。在 **Log** 查看即時輸出、搜尋警告或錯誤，遇到輸入提示時可送出 Enter。執行中可從 **總覽** 或 **Log** 停止或重新建置。重新建置會用原流程從第一步開始，並保留原 Job 的紀錄。
 
 ## 參數、產出物與排程
 
 - 在 **流程設定 → 參數表與 preset** 匯入 Markdown、CSV、XLSX 或 JSON。設定 Recipe 使用該表後，可在 Build 頁分組搜尋、選取參數、套用 preset 並即時預覽指令。Markdown 的限制備註可另設為互斥規則。
 - 在 **流程設定 → 產出物** 設定 glob、排除項、改名範本、目的地與 ZIP。手動整理會先顯示預覽。要在 build 成功後自動整理，將規則組連結到 Recipe。同名檔案會加序號。
-- 在 **設定** 管理每日或每週的 Windows 工作排程、通知與歷史保留。排程使用 Windows 的本機時間，透過 CLI 執行，即使 Web 或 Hub 已關閉也可建置。
+- 在 **工作排程** 管理每日或每週的 Windows 工作排程。排程使用 Windows 本機時間，透過 CLI 執行，即使 Web 或 Hub 已關閉也可建置。通知和歷史保留在 **設定** 管理。
 - AI 分析預設關閉，先在 **設定 → AI 分析設定** 開啟「啟用 AI 分析功能」。開啟後在 **Log** 可複製 AI 提示詞，或將選定 Job 的相關 log 送往已設定的 OpenCode 或相容端點。在 Windows 使用 OpenCode 時，請設定 `.exe` 的絕對路徑。
 
 ## CLI 範例

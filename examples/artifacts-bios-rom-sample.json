@@ -1,0 +1,16 @@
+{
+  "name": "BIOS ROM 打包範例",
+  "rules": [
+    {
+      "select": [
+        "Build/DT/XXXXpkg/RELEASE_CLANGPDB/ReleaseBIOS/XXXX_1557C_UNSIGNEC1.rom",
+        "Build/DT/XXXXpkg/RELEASE_CLANGPDB/ReleaseBIOS/XXXX_1557C_UNSIGNEC2.rom"
+      ],
+      "exclude": [],
+      "rename": "{name}{ext}",
+      "dest": "Artifacts/{date}/{branch}",
+      "zip": { "enabled": true, "file": "{date}_{branch}_{time}.zip" },
+      "when": "success"
+    }
+  ]
+}

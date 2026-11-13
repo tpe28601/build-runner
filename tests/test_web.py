@@ -131,12 +131,21 @@ class WebTests(unittest.TestCase):
         self.api("POST", "/api/settings", {"ai": {"clearApiKey": True}})
 
     def test_builtin_recipe_is_visible_and_read_only(self):
-        builtins = self.api("GET", "/api/recipes")["result"][:2]
-        self.assertEqual([record["name"] for record in builtins], ["Clean + Build", "Clean + Build (-nou)"])
+        builtins = self.api("GET", "/api/recipes")["result"][:3]
+        self.assertEqual([record["name"] for record in builtins],
+                         ["Clean + Build", "Clean + Build (-nou)", "Clean + Build + Package"])
         self.assertTrue(all(record["builtIn"] for record in builtins))
         self.assertEqual(builtins[0]["steps"][0]["argv"], ["builda.bat", "-cleanall"])
         self.assertEqual(builtins[1]["steps"][0]["argv"], ["builda.bat", "-cleanall", "-nou"])
         self.assertEqual(builtins[1]["steps"][1]["argv"], ["builda.bat", "-r", "-nou"])
+        self.assertEqual([step["argv"] for step in builtins[2]["steps"]],
+                         [["builda.bat", "-cleanall", "-nou"], ["builda.bat", "-r", "-nou"]])
+        artifact = self.api("GET", "/api/artifact-rules")["result"][0]
+        self.assertEqual(builtins[2]["artifacts"], artifact["id"])
+        self.assertTrue(artifact["builtIn"])
+        self.assertTrue(artifact["rules"][0]["zip"]["enabled"])
+        self.api("POST", "/api/artifact-rules", {**artifact, "confirm": True}, code=400)
+        self.api("DELETE", "/api/artifact-rules", {"name": artifact["id"], "confirm": True}, code=400)
         for record in builtins:
             self.api("POST", "/api/recipes", {**record, "confirm": True}, code=400)
             self.api("DELETE", "/api/recipes", {"name": record["id"], "confirm": True}, code=400)
@@ -152,6 +161,7 @@ class WebTests(unittest.TestCase):
              "exitCode": 1}), encoding="utf-8")
         body = "".join(f"line {number}\n" for number in range(1, 11))
         body += "line 11 sample.c(9): error C2065: unknown\n"
+        body += "line 12 before second error\nsecond.c(10): error C2143: missing token\nline 14 after second error\n"
         (folder / "build.log").write_bytes(body.encode("utf-8"))
         status, content, headers = self.request("GET", f"/api/jobs/{job_id}/log?download=1")
         self.assertEqual(status, 200)
@@ -169,6 +179,16 @@ class WebTests(unittest.TestCase):
         self.assertNotIn("5: line 5", prompt)
         self.assertEqual(self.api("POST", f"/api/jobs/{job_id}/ai",
                                   {"method": "copy", "preview": True})["result"]["scope"], "around")
+        selected = {"method": "copy", "preview": True, "logScope": "around",
+                    "logErrorLine": 13, "logBefore": 1, "logAfter": 0}
+        prompt = self.api("POST", f"/api/jobs/{job_id}/ai", selected)["result"]["prompt"]
+        self.assertIn("12: line 12", prompt)
+        self.assertIn("13: second.c", prompt)
+        self.assertIn('"line": 13', prompt)
+        self.assertNotIn("C2065", prompt)
+        self.assertNotIn("14: line 14", prompt)
+        self.api("POST", f"/api/jobs/{job_id}/ai", {**selected, "logErrorLine": 12}, code=400)
+        self.api("POST", f"/api/jobs/{job_id}/ai", {**selected, "logBefore": -1}, code=400)
         self.api("POST", f"/api/jobs/{job_id}/ai", {"method": "copy", "preview": True,
                                                     "logScope": "everywhere"}, code=400)
         self.api("POST", f"/api/jobs/{job_id}/ai", {"method": "copy", "preview": True,
@@ -356,3 +376,80 @@ class WebTests(unittest.TestCase):
         self.assertIn(job["id"], [item["id"] for item in self.api("GET", "/api/history")["result"]])
         self.api("DELETE", "/api/workspaces", {"id": row["id"]}, code=400)
         self.api("DELETE", "/api/workspaces", {"id": row["id"], "confirm": True})
+
+    @unittest.skipUnless(os.name == "nt", "Uses the Windows Job runner")
+    def test_restart_reuses_the_saved_plan_and_preserves_the_original_log(self):
+        workspace = self.root / "Restart sample"
+        workspace.mkdir()
+        (workspace / "active.lock").write_bytes(b"x")
+
+        def git(*args):
+            return subprocess.check_output(["git", "-C", str(workspace), *args],
+                                           stderr=subprocess.PIPE, text=True, timeout=10).strip()
+
+        def commit_sample():
+            git("-c", "user.name=Sample", "-c", "user.email=sample@example.invalid",
+                "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-m", "Sample")
+            return git("rev-parse", "--short", "HEAD")
+
+        git("init", "-b", "restart-original")
+        original_commit = commit_sample()
+        release = workspace / "release.txt"
+        row = self.api("POST", "/api/workspaces", {"name": workspace.name, "path": str(workspace)}, code=201)["result"]
+
+        def release_jobs():
+            release.touch()
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline:
+                if not any(job.get("workspaceId") == row["id"] and job["state"] in ("queued", "running")
+                           for job in self.api("GET", "/api/jobs")["result"]):
+                    return
+                time.sleep(.05)
+
+        self.addCleanup(release_jobs)
+        script = (
+            "import msvcrt, os, pathlib, time; active = open('active.lock', 'r+b'); "
+            "msvcrt.locking(active.fileno(), msvcrt.LK_NBLCK, 1); "
+            "print(os.environ['RESTART_SAMPLE'], flush=True); "
+            "next((None for _ in range(300) if pathlib.Path('release.txt').exists() or time.sleep(.05)), None)"
+        )
+        self.api("POST", "/api/recipes", {
+            "name": "Restart sample",
+            "steps": [{"argv": [sys.executable, "-c", script]}],
+            "env": {"RESTART_SAMPLE": "Original plan"},
+        }, code=201)
+        original = self.api("POST", "/api/jobs", {"workspaceIds": [row["id"]], "recipe": "Restart sample"},
+                            code=201)["result"][0]
+        original_path = "/api/jobs/" + original["id"]
+        original_folder = self.data / "jobs" / original["id"]
+        deadline = time.monotonic() + 8
+        while not (original_folder / "build.log").read_bytes() and time.monotonic() < deadline:
+            time.sleep(.05)
+        self.assertIn(b"Original plan", (original_folder / "build.log").read_bytes())
+        self.assertEqual(original["branch"], "restart-original")
+        self.assertEqual(original["commit"], original_commit)
+        self.api("POST", original_path + "/restart", {}, code=400)
+        self.api("POST", "/api/recipes", {
+            "name": "Restart sample",
+            "steps": [{"argv": [sys.executable, "-c", "raise SystemExit(1)"]}],
+            "confirm": True,
+        })
+        git("switch", "-c", "restart-updated")
+        updated_commit = commit_sample()
+        replacement = self.api("POST", original_path + "/restart", {"confirm": True}, code=201)["result"]
+        self.assertNotEqual(replacement["id"], original["id"])
+        self.assertEqual(replacement["branch"], "restart-updated")
+        self.assertEqual(replacement["commit"], updated_commit)
+        self.assertEqual(self.api("GET", original_path)["result"]["state"], "stopped")
+        self.assertIn(b"Original plan", (original_folder / "build.log").read_bytes())
+        self.assertEqual((self.data / "jobs" / replacement["id"] / "plan.json").read_bytes(),
+                         (original_folder / "plan.json").read_bytes())
+        again = self.api("POST", original_path + "/restart", {"confirm": True}, code=201)["result"]
+        self.assertEqual(again["id"], replacement["id"])
+        release.touch()
+        deadline = time.monotonic() + 8
+        while replacement["state"] in ("queued", "running") and time.monotonic() < deadline:
+            time.sleep(.05)
+            replacement = self.api("GET", "/api/jobs/" + replacement["id"])["result"]
+        self.assertEqual(replacement["state"], "success", replacement)
+        self.api("POST", "/api/jobs/" + replacement["id"] + "/restart", {"confirm": True}, code=409)

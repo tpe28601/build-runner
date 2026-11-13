@@ -4,7 +4,7 @@ const pageHelp = {
   overview: ["總覽", [
     "查看執行中、排隊中和最近完成的 Job。按「查看 Log」可追蹤輸出。",
     "在「同時執行上限」調整可同時執行的 Job 數量。填 0 代表不限。",
-    "要中斷工作時，使用 Job 卡片上的停止或取消排隊。",
+    "可從 Job 卡片停止、取消排隊或重新建置。重新建置會從原流程的第一步開始。",
   ]],
   workspaces: ["Workspace", [
     "輸入名稱與資料夾路徑，或按資料夾圖示瀏覽本機磁碟。",
@@ -18,8 +18,11 @@ const pageHelp = {
   ]],
   log: ["Log", [
     "選取 Job 後會自動讀取新增輸出。關閉「追蹤最新輸出」可停在目前位置。要存檔時按「下載 .log」。",
+    "拖曳 Log 查看區右下角，可調整查看區高度。",
     "搜尋關鍵字或選擇 error、fail、warning。使用上一筆／下一筆，或點判讀摘要跳到該行。",
-    "Job 結束後可複製 AI 提示詞，或送到已設定的 OpenCode／自訂端點（AI 分析預設關閉，先在設定頁開啟「啟用 AI 分析功能」）。可选择提示詞帶入的 log 範圍（錯誤附近、尾端、完整或自訂起訖行），「預覽提示詞」可先檢查內容。",
+    "Job 選單旁的紅色方框可停止建置，循環箭頭可重新建置。停止或失敗後仍可重新建置。",
+    "Job 結束後可複製 AI 提示詞，或送到已設定的 OpenCode／自訂端點。先在設定頁啟用 AI 分析功能。",
+    "Log 範圍選「錯誤附近」時，可選擇錯誤行並調整前後行數。也可以選尾端、完整 Log 或自訂起訖行。用「預覽提示詞」確認帶入的內容。",
   ]],
   history: ["歷史", [
     "可依 Workspace、結果及完成日期篩選紀錄。",
@@ -27,14 +30,18 @@ const pageHelp = {
     "刪除前會要求確認，會連同該 Job 的 log 一併移除（執行中的 Job 不能刪）。已儲存的分析回答也會一併刪除。",
   ]],
   recipes: ["流程設定", [
-    "可查看內建的 Clean + Build 與 Clean + Build (-nou)，或複製成自己的 Recipe，再編排步驟及連結參數表與產出物規則。",
+    "可查看內建的 Clean + Build、Clean + Build (-nou) 與 Clean + Build + Package，也可複製成自己的 Recipe，調整步驟、參數表或產出物規則。",
     "在參數表匯入檔案並編輯互斥規則。Preset 可從 Build 頁另存。",
     "在產出物設定選取、排除、命名和 ZIP。手動執行前先預覽並確認。",
   ]],
   settings: ["設定", [
-    "歷史保留可依天數或筆數清理，填 0 停用該條件。",
+    "歷史保留可依天數或筆數清理，0 不限制。",
     "可開啟瀏覽器通知、頁籤標題閃爍或提示音。桌面通知需要瀏覽器授權。",
-    "AI 分析預設關閉：先在「AI 分析設定」開啟「啟用 AI 分析功能」，再選擇預設方式和提示詞範本。工作排程支援每日或每週，可啟用、停用或刪除。",
+    "AI 分析：開啟「啟用 AI 分析功能」後，選擇預設方式與提示詞範本。",
+  ]],
+  schedules: ["Windows 工作排程", [
+    "選擇 Workspace、Recipe 和執行時間。支援每日或每週執行。",
+    "排程可啟用、停用或刪除，Build Runner 關閉時仍可由 Windows 啟動建置。",
   ]],
 };
 
@@ -51,29 +58,18 @@ let titleTimer;
 let audio;
 
 function initializeOperations() {
-  for (const [id, [title, steps]] of Object.entries(pageHelp)) {
-    const head = $(id).querySelector(".page-head");
-    const actions = element("div", "row page-head-actions");
-    actions.append(...[...head.children].slice(1));
-    const trigger = button("功能說明", () => {
-      $("page-help-title").textContent = title + "｜功能說明";
-      const items = element("ol");
-      items.setAttribute("role", "list");
-      for (const [index, step] of steps.entries()) {
-        const item = element("li");
-        const number = element("span", "page-help-number", (index + 1) + ".");
-        number.setAttribute("aria-hidden", "true");
-        item.append(number, element("span", "page-help-step", step));
-        items.append(item);
-      }
-      $("page-help-content").replaceChildren(items);
-      $("page-help").showModal();
-    });
-    trigger.prepend(icon("info"));
-    actions.append(trigger);
-    head.append(actions);
-    TbIcons.render(actions);
-  }
+  const helpDialog = $("page-help");
+  helpDialog.addEventListener("click", (event) => {
+    if (event.target === helpDialog) helpDialog.close();
+  });
+  listen($("page-help-trigger"), "click", () => {
+    const [title, steps] = pageHelp[page];
+    $("page-help-title").textContent = "功能說明：" + title;
+    const items = element("ul");
+    for (const step of steps) items.append(element("li", "", step));
+    $("page-help-content").replaceChildren(items);
+    helpDialog.showModal();
+  });
   refreshOperationSettings().then(() => {
     if (!$("log-job").value) $("ai-method").value = operationSettings.ai.method;
     applyAiVisibility();
@@ -240,6 +236,13 @@ async function refreshOperationSettings() {
   return result;
 }
 
+function updateAiSettingsFields() {
+  const disabled = !$("ai-enabled").checked;
+  const fields = $("ai-settings-fields");
+  fields.hidden = disabled;
+  fields.disabled = disabled;
+}
+
 function renderSettings(settings) {
   const { historyRetention: retention, notifications, ai, autoSkipPrompts } = settings;
   $("retention-days").value = retention.days;
@@ -257,6 +260,7 @@ function renderSettings(settings) {
   $("ai-key-state").textContent = ai.hasApiKey ? "已儲存 ••••••••，留空可保留。" : "尚未設定，可依端點需求填寫。";
   $("ai-clear-key").checked = false;
   $("ai-template").value = ai.template;
+  updateAiSettingsFields();
 }
 
 async function saveOperationSettings(body) {
@@ -304,14 +308,17 @@ listen($("prompts-form"), "submit", async () => {
   announce("已儲存互動提示設定。");
 });
 
+$("ai-enabled").addEventListener("change", updateAiSettingsFields);
 listen($("ai-settings-form"), "submit", async () => {
-  const ai = {
-    enabled: $("ai-enabled").checked,
-    method: $("ai-default").value, timeoutSec: Number($("ai-timeout").value),
-    opencodePath: $("ai-executable").value.trim(), opencodeArgs: parseJson($("ai-args").value || "[]", "OpenCode 參數"),
-    baseUrl: $("ai-base").value.trim(), model: $("ai-model").value.trim(), apiKey: $("ai-key").value,
-    clearApiKey: $("ai-clear-key").checked, template: $("ai-template").value,
-  };
+  const ai = { enabled: $("ai-enabled").checked };
+  if (ai.enabled) {
+    Object.assign(ai, {
+      method: $("ai-default").value, timeoutSec: Number($("ai-timeout").value),
+      opencodePath: $("ai-executable").value.trim(), opencodeArgs: parseJson($("ai-args").value || "[]", "OpenCode 參數"),
+      baseUrl: $("ai-base").value.trim(), model: $("ai-model").value.trim(), apiKey: $("ai-key").value,
+      clearApiKey: $("ai-clear-key").checked, template: $("ai-template").value,
+    });
+  }
   const { ai: saved } = await saveOperationSettings({ ai });
   applyAiVisibility();
   $("ai-key").value = "";
@@ -319,6 +326,48 @@ listen($("ai-settings-form"), "submit", async () => {
   $("ai-key-state").textContent = saved.hasApiKey ? "已儲存 ••••••••，留空可保留。" : "尚未設定，可依端點需求填寫。";
   announce("已儲存 AI 設定。");
 });
+
+const AI_ERROR_PAGE_SIZE = 100;
+let aiErrorPage = null;
+let aiPreviewVersion = 0;
+
+function invalidateAiPreview() {
+  aiPreviewVersion++;
+  $("ai-preview-field").hidden = true;
+}
+
+async function loadAiErrors(index = 0) {
+  const view = log;
+  const request = { view, index };
+  aiErrorPage = request;
+  $("ai-error-prev").disabled = $("ai-error-next").disabled = true;
+  $("ai-error-next").textContent = "下一頁錯誤";
+  try {
+    const query = new URLSearchParams({ kind: "error", index, limit: AI_ERROR_PAGE_SIZE });
+    const { result } = await api("/jobs/" + view.id + "/search?" + query);
+    if (log !== view || aiErrorPage !== request) return;
+    const picker = $("ai-error-line");
+    const selected = picker.value;
+    const prior = picker.selectedOptions[0];
+    const options = result.matches.map(({ line, text }) =>
+      new Option("第 " + line + " 行 · " + text.trim().slice(0, 160), line));
+    if (selected && !options.some((option) => option.value === selected)) options.unshift(prior);
+    picker.replaceChildren(new Option("自動選取根本錯誤", ""), ...options);
+    picker.value = selected;
+    $("ai-error-pages").hidden = result.total <= AI_ERROR_PAGE_SIZE;
+    $("ai-error-prev").disabled = index === 0;
+    $("ai-error-next").disabled = index + AI_ERROR_PAGE_SIZE >= result.total;
+    $("ai-error-count").textContent = (index + 1) + "–" + (index + result.matches.length) + " / " + result.total;
+  } catch (error) {
+    if (log !== view || aiErrorPage !== request) return;
+    $("ai-error-prev").disabled = index === 0;
+    $("ai-error-next").disabled = false;
+    $("ai-error-pages").hidden = false;
+    $("ai-error-count").textContent = error.message;
+    $("ai-error-next").textContent = "重試載入";
+    request.retry = true;
+  }
+}
 
 function updateAnalysisActions() {
   const job = jobs.find((item) => item.id === log.id);
@@ -329,12 +378,28 @@ function updateAnalysisActions() {
   $("ai-cancel").hidden = !running;
   $("ai-method").disabled = !!running;
   $("ai-scope").disabled = !!running;
+  $("ai-error-fields").disabled = !!running;
+  const around = $("ai-scope").value === "around";
+  $("ai-error-fields").hidden = !around;
+  if (around && operationSettings.ai?.enabled && job && !activeStates.has(job.state) && aiErrorPage?.view !== log) {
+    void loadAiErrors();
+  }
   $("ai-run").textContent = $("ai-method").value === "copy" ? "複製提示詞" : "送出分析";
 }
 
 function logScopePayload() {
   const scope = $("ai-scope").value;
   const payload = { logScope: scope };
+  if (scope === "around") {
+    const fields = [$("ai-log-before"), $("ai-log-after")];
+    if (fields.some((field) => field.value === "" || !field.checkValidity())) {
+      throw new Error("前後行數請各填 0 到 1000 的整數。");
+    }
+    payload.logBefore = fields[0].valueAsNumber;
+    payload.logAfter = fields[1].valueAsNumber;
+    const line = $("ai-error-line").value;
+    if (line) payload.logErrorLine = Number(line);
+  }
   if (scope === "range") {
     const start = Number.parseInt($("ai-log-start").value, 10);
     const end = Number.parseInt($("ai-log-end").value, 10);
@@ -374,11 +439,14 @@ async function loadSavedAnalyses(id) {
 }
 
 function chooseAnalysisJob(id) {
+  aiErrorPage = null;
+  $("ai-error-line").replaceChildren(new Option("自動選取根本錯誤", ""));
+  $("ai-error-pages").hidden = true;
   $("ai-method").value = operationSettings.ai.method;
   $("ai-status").textContent = id ? "選擇分析方式。Job 結束後即可使用。" : "選擇已結束的 Job。";
   $("ai-output-field").hidden = $("ai-saved-field").hidden = true;
   $("ai-output").value = "";
-  $("ai-preview-field").hidden = true;
+  invalidateAiPreview();
   $("ai-preview-text").value = "";
   $("ai-saved").replaceChildren();
   const task = analysesByJob.get(id);
@@ -466,15 +534,25 @@ listen($("ai-run"), "click", async () => {
 });
 
 listen($("ai-scope"), "change", () => {
+  invalidateAiPreview();
   const range = $("ai-scope").value === "range";
   $("ai-start-field").hidden = !range;
   $("ai-end-field").hidden = !range;
+  updateAnalysisActions();
 });
+
+for (const id of ["ai-error-line", "ai-log-before", "ai-log-after", "ai-log-start", "ai-log-end"]) {
+  $(id).addEventListener("input", invalidateAiPreview);
+}
+
+listen($("ai-error-prev"), "click", () => loadAiErrors(aiErrorPage.index - AI_ERROR_PAGE_SIZE));
+listen($("ai-error-next"), "click", () => loadAiErrors(aiErrorPage.index + (aiErrorPage.retry ? 0 : AI_ERROR_PAGE_SIZE)));
 
 listen($("ai-preview"), "click", async () => {
   const id = log.id;
+  const version = aiPreviewVersion;
   const { result } = await api("/jobs/" + id + "/ai", "POST", { method: "copy", preview: true, ...logScopePayload() });
-  if (log.id !== id) return;
+  if (log.id !== id || version !== aiPreviewVersion) return;
   $("ai-preview-text").value = result.prompt;
   $("ai-preview-meta").textContent = "（" + result.prompt.length.toLocaleString() + " 字元）";
   $("ai-preview-field").hidden = false;
@@ -528,8 +606,10 @@ listen($("schedule-form"), "submit", async (event) => {
 });
 
 async function loadSettingsPage() {
-  const settings = await refreshOperationSettings();
-  renderSettings(settings);
+  renderSettings(await refreshOperationSettings());
+}
+
+async function loadSchedulesPage() {
   await Promise.all([loadSchedules(), Promise.all([refreshWorkspaces(), loadConfiguration()]).then(() => {
     selectRecords("schedule-workspace", workspaces, "請選擇 Workspace");
     selectRecords("schedule-recipe", configuration.recipes, "請選擇 Recipe");

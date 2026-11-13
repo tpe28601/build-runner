@@ -148,6 +148,7 @@ def git(path, *args, required=False, timeout=10):
             ["git", "-C", str(path), *args], shell=False, capture_output=True,
             stdin=subprocess.DEVNULL, encoding="utf-8", errors="replace", timeout=timeout,
             env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         # Broad on purpose: besides "no git installed", spawning can fail with

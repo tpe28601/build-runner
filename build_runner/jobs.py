@@ -5,6 +5,7 @@ import ctypes
 from ctypes import wintypes
 from datetime import datetime, timezone
 import os
+from pathlib import Path
 import re
 import shutil
 import subprocess
@@ -16,6 +17,7 @@ from . import artifacts, history, paramsets, recipes, workspaces
 from .paths import ROOT, ToolError, file_lock, read_json, write_json
 
 ACTIVE = {"queued", "running"}
+RESTARTABLE = ACTIVE | {"stopped", "failed"}
 
 
 def now():
@@ -227,6 +229,20 @@ def start(data, workspace, recipe_name, preset=None, *, force=False, dry_run=Fal
     return rows[0], warnings
 
 
+def create_queued_job(data, preview, plan, *, pending=False):
+    row = {
+        **preview,
+        "id": uuid4().hex, "state": "queued", "step": None,
+        "queuedAt": now(), "startedAt": None, "endedAt": None, "exitCode": None,
+        "pid": None, "argv": [],
+    }
+    folder = job_dir(data, row["id"])
+    write_json(folder / "plan.json", plan)
+    (folder / "build.log").touch()
+    write_json(folder / ("status.pending.json" if pending else "status.json"), row)
+    return row
+
+
 def start_many(data, workspace_rows, recipe_name, preset=None, *, force=False, dry_run=False, overrides=None,
                restrict_values=False):
     recipe = recipes.get_recipe(data, recipe_name)
@@ -263,19 +279,7 @@ def start_many(data, workspace_rows, recipe_name, preset=None, *, force=False, d
         active = list_jobs(data)
         recover_dead(data, active)
         warnings = validate(active)
-        ids = []
-        for preview, plan in plans:
-            row = {
-                **preview,
-                "id": uuid4().hex, "state": "queued", "step": None,
-                "queuedAt": now(), "startedAt": None, "endedAt": None, "exitCode": None,
-                "pid": None, "argv": [],
-            }
-            folder = job_dir(data, row["id"])
-            write_json(folder / "plan.json", plan)
-            (folder / "build.log").touch()
-            save(data, row)
-            ids.append(row["id"])
+        ids = [create_queued_job(data, preview, plan)["id"] for preview, plan in plans]
         dispatch(data)
         return [get_job(data, job_id) for job_id in ids], warnings
 
@@ -348,6 +352,7 @@ def kill_tree(pid):
     run = subprocess.run(
         ["taskkill.exe", "/PID", str(pid), "/T", "/F"], shell=False,
         stdin=subprocess.DEVNULL, capture_output=True, timeout=10,
+        creationflags=subprocess.CREATE_NO_WINDOW,
     )
     with process_token(pid, wait_ms=3000) as token:
         if token is not None:
@@ -355,22 +360,78 @@ def kill_tree(pid):
                             taskkillExitCode=run.returncode)
 
 
+def stop_active_job(data, row):
+    """Stop and finalize an active job. Caller holds the job lock."""
+    if row["state"] == "running":
+        with process_token(row["pid"]) as token:
+            if not runner_matches(row, token):
+                return finish(data, row, "failed", 1, message="Runner exited before recording a result.")
+            kill_tree(row["pid"])
+    return finish(data, row, "stopped", 4)
+
+
 def stop(data, job_id):
     with lock(data):
         row = get_job(data, job_id)
         if row["state"] not in ACTIVE:
             return row
-        if row["state"] == "running":
-            with process_token(row["pid"]) as token:
-                if runner_matches(row, token):
-                    kill_tree(row["pid"])
-                else:
-                    result = finish(data, row, "failed", 1, message="Runner exited before recording a result.")
-                    dispatch(data)
-                    return result
-        result = finish(data, row, "stopped", 4)
+        result = stop_active_job(data, row)
         dispatch(data)
         return result
+
+
+def restart(data, job_id):
+    snapshot = get_job(data, job_id)
+    # Read the checkout without blocking other jobs while Git answers.
+    git = (workspaces.git_state(snapshot["workspacePath"], include_dirty=False)
+           if snapshot["state"] in RESTARTABLE else None)
+    with lock(data):
+        original = get_job(data, job_id)
+        replacement_id = original.get("restartedAs")
+        if replacement_id:
+            folder = job_dir(data, replacement_id)
+            if (folder / "status.json").is_file():
+                return get_job(data, replacement_id)
+            if not (folder / "status.pending.json").is_file():
+                replacement_id = None
+        if not replacement_id and original["state"] not in RESTARTABLE:
+            raise ToolError("JOB_NOT_ACTIVE", "只能重新建置執行中、排隊中、已停止或失敗的 Job。")
+
+        if git_lock_path(data).exists():
+            raise ToolError("JOB_BUSY", "A Git operation is in progress. Retry after it finishes.", 1)
+        limit(data)
+        peers = [row for row in list_jobs(data) if row["id"] != job_id]
+        recover_dead(data, peers)
+        git_common = git["gitCommonDir"] if git else original.get("gitCommonDir")
+        check_conflicts(data, original["workspacePath"], git_common, rows=peers)
+
+        if not replacement_id:
+            plan = read_json(job_dir(data, job_id) / "plan.json")
+            if not isinstance(plan, dict) or not plan.get("steps"):
+                raise ToolError("JOB_PLAN_NOT_FOUND", "找不到原 Job 的執行計畫。")
+            if any(not Path(step["cwd"]).is_dir() for step in plan["steps"]):
+                raise ToolError("INVALID_WORKSPACE", "原 Job 的工作資料夾已不存在。")
+            preview = {key: original.get(key) for key in (
+                "workspace", "workspaceId", "workspacePath", "recipe", "argvPreview",
+                "params",
+            )}
+            preview.update(branch=git["branch"], commit=git["commit"], gitCommonDir=git_common,
+                           restartedFrom=job_id)
+            replacement = create_queued_job(data, preview, plan, pending=True)
+            replacement_id = replacement["id"]
+            original["restartedAs"] = replacement_id
+            save(data, original)
+
+        # Keep the replacement out of the dispatcher until the original is stopped.
+        # Retain the staged job ID so a failed publication can be retried.
+        pending = job_dir(data, replacement_id) / "status.pending.json"
+        if not pending.is_file():
+            raise ToolError("JOB_NOT_FOUND", "找不到重來後的 Job。")
+        if original["state"] in ACTIVE:
+            stop_active_job(data, original)
+        os.replace(pending, pending.with_name("status.json"))
+        dispatch(data)
+        return get_job(data, replacement_id)
 
 
 def wait(data, job_id):

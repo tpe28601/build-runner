@@ -13,6 +13,7 @@ const tones = { queued: "warn", running: "accent", success: "ok", failed: "dange
 const PROMPT_PATTERN = /\benter (?:your username|password for|passphrase for)\b/i;
 const selected = new Set();
 const gitDetails = new Map();
+const pendingJobActions = new Set();
 let page;
 let navigation = 0;
 let workspaces = [];
@@ -25,7 +26,7 @@ let log = newLog("");
 function newLog(id) {
   return { id, offset: 0, line: 1, partial: "", index: -1, total: 0, kind: "", highlighted: [],
     target: null, searchVersion: 0, jumpVersion: 0, lastScan: 0, dirty: true, final: false,
-    reading: false, scanning: false, searching: 0, booting: true, promptSeen: false, tail: "" };
+    reading: false, scanning: false, searching: 0, booting: true, promptSeen: false, tail: "", triageKey: "" };
 }
 
 function element(tag, classes, text) {
@@ -197,6 +198,61 @@ function openLog(id) {
   else pollLog().catch((error) => announce(error.message, true));
 }
 
+function canRestartJob(row) {
+  if (!row) return false;
+  return activeStates.has(row.state) ||
+    ((row.state === "stopped" || row.state === "failed") && !jobs.some((job) => job.id === row.restartedAs));
+}
+
+function updateLogJobControls() {
+  const job = jobs.find((row) => row.id === log.id);
+  const active = job && activeStates.has(job.state);
+  const pending = job && pendingJobActions.has(job.id);
+  const stop = $("log-stop-job");
+  const stopLabel = job?.state === "queued" ? "取消排隊" : "停止建置";
+  stop.title = stopLabel;
+  stop.setAttribute("aria-label", stopLabel);
+  stop.hidden = !active;
+  $("log-restart-job").hidden = !canRestartJob(job);
+  stop.disabled = $("log-restart-job").disabled = !!pending;
+}
+
+async function controlJob(row, action) {
+  const restarting = action === "restart";
+  if (!row || pendingJobActions.has(row.id)) return;
+  const active = activeStates.has(row.state);
+  if (restarting ? !canRestartJob(row) : !active) return;
+  const label = row.state === "queued" ? "取消排隊" : "停止建置";
+  const prompt = restarting
+    ? (active ? "結束目前的 Job，並從第一步重新建置「" : "從第一步重新建置「") + row.workspace + "」？"
+    : label + "「" + row.workspace + "」？";
+  if (!window.confirm(prompt)) return;
+  pendingJobActions.add(row.id);
+  updateLogJobControls();
+  try {
+    const { result } = await api("/jobs/" + row.id + "/" + action, "POST", { confirm: true });
+    await syncJobs();
+    if (restarting) {
+      openLog(result.id);
+      announce("已建立重新建置的 Job。");
+    } else {
+      announce(result.state === "stopped" ? "已停止 Job。" : "Job 已結束。");
+    }
+  } finally {
+    pendingJobActions.delete(row.id);
+    updateLogJobControls();
+  }
+}
+
+function jobActionButton(row, action, label, iconName, danger = false) {
+  const classes = danger ? "tb-btn tb-btn--icon tb-btn--danger" : "tb-btn tb-btn--icon";
+  const control = button("", () => controlJob(row, action), classes);
+  control.title = label;
+  control.setAttribute("aria-label", label);
+  control.innerHTML = TbIcons.svg(iconName);
+  return control;
+}
+
 function jobCard(row) {
   const card = element("article", "tb-card tb-card--hover stack");
   const head = element("div", "row");
@@ -212,13 +268,10 @@ function jobCard(row) {
   }
   foot.append(button("查看 Log", () => openLog(row.id)));
   if (activeStates.has(row.state)) {
-    const label = row.state === "queued" ? "取消排隊" : "停止";
-    foot.append(button(label, async () => {
-      if (!window.confirm(label + "「" + row.workspace + "」的 Build？")) return;
-      await api("/jobs/" + row.id + "/stop", "POST", { confirm: true });
-      await syncJobs();
-    }));
+    const label = row.state === "queued" ? "取消排隊" : "停止建置";
+    foot.append(jobActionButton(row, "stop", label, "square", true));
   }
+  if (canRestartJob(row)) foot.append(jobActionButton(row, "restart", "重新建置", "refresh-cw"));
   if (row.state === "running") {
     // 給卡住的互動提示（账号/密码/passphrase）送一個 Enter；後端 runner 0.5 秒內送入。
     const enter = button("送 Enter", async () => {
@@ -256,6 +309,7 @@ function syncLogPicker() {
   for (const row of jobs) options.push(new Option(row.workspace + " · " + row.recipe + " · " + states[row.state], row.id));
   $("log-job").replaceChildren(...options);
   $("log-job").value = log.id;
+  updateLogJobControls();
 }
 
 async function syncJobs(force = false) {
@@ -270,8 +324,8 @@ async function syncJobs(force = false) {
   }
 }
 
-function workspaceChoice(row, prefix) {
-  const label = element("label", "check");
+function workspaceChoice(row, prefix, classes = "check") {
+  const label = element("label", classes);
   const box = element("input");
   box.type = "checkbox";
   box.value = row.id;
@@ -305,9 +359,15 @@ function renderWorkspaces() {
 }
 
 function workspaceCard(row) {
-  const card = element("article", "tb-card tb-card--hover stack");
+  const card = element("article", "tb-card tb-card--hover stack workspace-card");
   const head = element("div", "row");
-  head.append(workspaceChoice(row, "workspace"), badge(row.lastResult));
+  const choice = workspaceChoice(row, "workspace");
+  const checkbox = choice.querySelector("input");
+  head.append(choice, badge(row.lastResult));
+  card.addEventListener("click", (event) => {
+    if (event.target.closest("label, input, button, select, a")) return;
+    checkbox.click();
+  });
   card.append(head, element("p", "tb-mono workspace-path", row.path));
   const metadata = row.gitCommonDir ?
     [row.branch || "detached HEAD", row.commit, row.subject, row.dirty ? "有未提交變更" : "工作樹乾淨"].filter(Boolean).join(" · ") :
@@ -404,7 +464,8 @@ listen($("import-selected"), "click", async () => {
 listen($("workspace-build"), "click", () => { location.hash = "build"; });
 
 function renderBuildChoices() {
-  $("build-workspaces").replaceChildren(...(workspaces.length ? workspaces.map((row) => workspaceChoice(row, "build")) : [
+  $("build-workspaces").replaceChildren(...(workspaces.length ? workspaces.map((row) =>
+    workspaceChoice(row, "build", "check build-workspace-card")) : [
     empty("請先在 Workspace 分頁登錄資料夾。"),
   ]));
 }
@@ -505,11 +566,10 @@ async function loadHistory() {
     const outputs = artifactSummary(row);
     if (outputs) result.append(outputs);
     record.insertCell().append(element("div", "", timeLabel(row.endedAt)), element("div", "tb-small tb-muted", duration(row.durationSec)));
-    const root = record.insertCell();
-    root.className = "history-root";
     const rootText = row.state === "success" ? "—" : row.rootError?.text || "—";
-    root.textContent = rootText;
+    const root = element("span", "history-root", rootText);
     if (rootText !== "—") root.title = rootText;
+    record.insertCell().append(root);
     const actions = element("div", "row");
     const aiButton = button("AI 分析", () => openSavedAnalysis(row.id));
     aiButton.hidden = operationSettings.ai?.enabled !== true;   // hidden while the feature switch is off
@@ -533,6 +593,7 @@ function chooseLog(id) {
   $("triage").hidden = true;
   $("log-state").replaceWith(Object.assign(badge(), { id: "log-state", textContent: "尚未選擇 Job" }));
   $("log-job").value = id;
+  updateLogJobControls();
   const download = $("log-download");
   download.href = id ? "/api/jobs/" + encodeURIComponent(id) + "/log?download=1" : "#";
   download.hidden = !id;
@@ -619,6 +680,8 @@ function updateEnterBanner(job) {
   if (banner) banner.hidden = !(job && job.state === "running" && log.promptSeen);
 }
 
+listen($("log-stop-job"), "click", () => controlJob(jobs.find((row) => row.id === log.id), "stop"));
+listen($("log-restart-job"), "click", () => controlJob(jobs.find((row) => row.id === log.id), "restart"));
 listen($("enter-send"), "click", async () => {
   if (!log.id) return;
   const send = $("enter-send");
@@ -630,16 +693,27 @@ listen($("enter-send"), "click", async () => {
 
 function renderTriage(view, report) {
   if (view !== log) return;
+  const root = report.rootError;
+  const key = JSON.stringify([!!report.lineCount, report.result, report.cascadeCount, root?.line, root?.text]);
+  if (key === view.triageKey) return;
+  view.triageKey = key;
   const box = $("triage");
   box.hidden = !report.lineCount;
-  const header = element("div", "row");
-  header.append(element("strong", "", "Log 判讀"), badge(report.result));
-  if (report.cascadeCount) header.append(element("span", "tb-small", "連鎖錯誤 " + report.cascadeCount + " 筆"));
-  const root = report.rootError;
-  const detail = root
-    ? button("第 " + root.line + " 行 · " + root.text, () => jumpTo(root.line))
-    : element("p", "tb-small tb-muted", "目前未辨識到根本錯誤。");
-  box.replaceChildren(header, detail);
+  const heading = element("span", "triage-summary");
+  heading.append(element("strong", "", "Log 判讀"), badge(report.result));
+  if (report.cascadeCount) heading.append(element("span", "tb-small tb-muted", "連鎖錯誤 " + report.cascadeCount + " 筆"));
+  if (!root) {
+    heading.append(element("span", "tb-small tb-muted", "目前未辨識到根本錯誤。"));
+    box.replaceChildren(heading);
+    return;
+  }
+  heading.append(element("span", "tb-small tb-muted", "根本錯誤 · 第 " + root.line + " 行"));
+  const summary = element("summary");
+  summary.append(heading);
+  const details = element("details");
+  details.open = box.querySelector("details")?.open === true;
+  details.append(summary, button("跳到第 " + root.line + " 行 · " + root.text, () => jumpTo(root.line)));
+  box.replaceChildren(details);
 }
 
 function renderSearch(view, result) {
@@ -793,6 +867,7 @@ async function navigate() {
     if (page === "recipes") await loadConfigurationEditor();
     if (page === "history") await loadHistory();
     if (page === "settings") await loadSettingsPage();
+    if (page === "schedules") await loadSchedulesPage();
     if (page === "log") {
       await syncJobs(true);
       if (current === navigation) {

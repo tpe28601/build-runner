@@ -213,6 +213,10 @@ def run(data, job_id):
         contained = True
         git = workspaces.git_state(plan["workspacePath"], include_dirty=False)
         row.update(branch=git["branch"], commit=git["commit"])
+        # Give the step an attachable console for raw-key prompts without showing a window.
+        startup = subprocess.STARTUPINFO()
+        startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+        startup.wShowWindow = subprocess.SW_HIDE
         with log_path.open("ab", buffering=0) as log:
             forwarder = EnterForwarder(log, log_path, folder / "enter.request", auto_skip=auto_skip)
             for step in plan["steps"]:
@@ -224,6 +228,7 @@ def run(data, job_id):
                     process = subprocess.Popen(
                         command, executable=executable, cwd=step["cwd"], env=step_env, shell=False,
                         stdin=subprocess.PIPE, stdout=log, stderr=subprocess.STDOUT,
+                        creationflags=subprocess.CREATE_NEW_CONSOLE, startupinfo=startup,
                     )
                 try:
                     exit_code = forwarder.wait(process, deadline)

@@ -85,7 +85,8 @@ def endpoint_url(base):
     return parsed._replace(path=path + ("" if path.endswith("/v1") else "/v1") + "/chat/completions").geturl()
 
 
-def prompt_for(row, log, template=DEFAULT_TEMPLATE, scope="around", start=1, end=1):
+def prompt_for(row, log, template=DEFAULT_TEMPLATE, scope="around", start=1, end=1, *,
+               error_line=None, before=40, after=40):
     report = logtools.triage(log)
     root = report["rootError"]
     omitted = 0
@@ -104,13 +105,26 @@ def prompt_for(row, log, template=DEFAULT_TEMPLATE, scope="around", start=1, end
             raise ToolError("INVALID_LOG_RANGE", "Selected log range exceeds 20,000 lines.")
         lines = list(islice(logtools.iter_lines(log), first - 1, last))
     else:
-        center = root["line"] if root else max(1, report["lineCount"] - 40)
-        first = max(1, center - 40)
-        lines = list(islice(logtools.iter_lines(log), first - 1, center + 40))
+        center = error_line or (root["line"] if root else max(1, report["lineCount"] - 40))
+        if error_line and error_line > report["lineCount"]:
+            raise ToolError("INVALID_LOG_RANGE", "選取的錯誤行超出 Log 範圍。")
+        first = max(1, center - before)
+        lines = list(islice(logtools.iter_lines(log), first - 1, center + after))
     context = "\n".join(f"{number}: {line[:1500]}" for number, line in enumerate(lines, first))
     if omitted:
         context = f"[... first {omitted} lines omitted ...]\n{context}"
     triage = {"result": report["result"], "rootError": root, "cascadeErrors": report["cascadeErrors"][:8]}
+    if scope == "around" and error_line:
+        offset = error_line - first
+        if offset >= len(lines):
+            raise ToolError("INVALID_LOG_RANGE", "選取的錯誤行超出 Log 範圍。")
+        selected_text = lines[offset]
+        kind, location = logtools.classify(selected_text)
+        if not kind:
+            raise ToolError("INVALID_LOG_RANGE", "選取的行不是已辨識的錯誤。")
+        triage = {"result": report["result"],
+                  "selectedError": {"line": error_line, "kind": kind, "location": location,
+                                    "text": selected_text.strip()[:1500]}}
     values = {"workspace": str(row.get("workspace") or ""), "branch": str(row.get("branch") or ""),
               "command": json.dumps(row.get("argv") or row.get("argvPreview") or [], ensure_ascii=False),
               "triage": json.dumps(triage, ensure_ascii=False), "context": context}
