@@ -257,7 +257,8 @@ def run(data, job_id):
             jobs.save(data, row)
         try:
             artifact_plan = artifacts.preview(plan["workspacePath"], plan["artifactRules"],
-                                              {**row, "jobId": row["id"]})
+                                              {**row, "jobId": row["id"],
+                                               "repoRoot": workspaces.repo_root(plan["workspacePath"])})
             outcome = artifacts.execute(artifact_plan)
             row["artifacts"] = [item["destination"] for item in (*outcome["files"], *outcome["archives"])]
             row["artifactErrors"] = outcome["errors"]

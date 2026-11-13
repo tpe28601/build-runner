@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.5] - 2026-11-13
+
+### 新增
+
+- **產出物規則可錨定到 repo 根**：每條規則新增 `root`（`workspace` 預設，或 `repo`＝`git rev-parse --show-toplevel` 的工作樹頂層）。Dell 平台的 Workspace 是平台資料夾（`builda.bat` 所在）但 `Build\` 產出在 repo 根，原本被鎖在 Workspace 內的 glob 因此挑不到檔；改用 `root: "repo"` 後可直接挑 `Build/DT/<平台>/RELEASE_CLANGPDB/ReleaseBIOS/*.rom`。 glob 仍不得含 `..`、盤符或絕對路徑（不得逃出錨點），相對 `dest` 落在錨點下、絕對路徑照舊。規則編輯器加「資料來源」選單，內建 BIOS ROM 打包規則改採 `root: "repo"`。
+
+### 變更
+
+- **Workspace 列表秒開**：`GET /api/workspaces` 不再跑 `git status`（幾十 GB 的 repo 會卡好幾秒），「有未提交變更／工作樹乾淨」改由新端點 `GET /api/workspaces/dirty`（最多 4 併發檢查各 Workspace）在背景補齊；同一時間只會有一輪掃描。
+- **總覽 Job 卡移除「送 Enter」按鈕**：手動送 Enter 改由 Log 頁偵測到提示時的「按 Enter 繼續」橫幅與 MCP `send_enter` 承擔；API 與自動跳過不受影響。
+
 ## [0.4.4] - 2026-11-13
 
 ### 新增

@@ -98,7 +98,7 @@ Dev-Toolbox 第四個工具：管理多個程式碼資料夾、用可自訂的�
 - 停止：用 `taskkill /PID <pid> /T /F` 結束整個行程樹。
 - **架構**：每個 Job 由獨立的 runner 子行程執行（`python -m build_runner.runner <jobId>`），狀態寫在 `jobs\<jobId>\status.json`、輸出寫在 `jobs\<jobId>\build.log`。Web、CLI、MCP 都讀同一份檔案，所以關掉網頁不會中斷 build，三種介面看到的也一致。
 - status.json：`{ id, workspace, recipe, argvPreview, state: queued|running|success|failed|stopped, step, startedAt, endedAt, exitCode, pid, branch, commit }`。
-- **互動提示跳過**：Build 停在 `Enter Your Username:`、`Enter password for ...:`、`Enter passphrase for ... (enter to skip):` 時送 Enter（空回答略過）。自動模式（`autoSkipPrompts`，預設開）偵測 log 尾端提示＋輸出停止 1.5 秒後自動送，每 Job 上限 5 次、冷卻 2 秒；手動為「送 Enter」按鈕、log 頁橫幅與 MCP `send_enter`。
+- **互動提示跳過**：Build 停在 `Enter Your Username:`、`Enter password for ...:`、`Enter passphrase for ... (enter to skip):` 時送 Enter（空回答略過）。自動模式（`autoSkipPrompts`，預設開）偵測 log 尾端提示＋輸出停止 1.5 秒後自動送，每 Job 上限 5 次、冷卻 2 秒；手動為 log 頁「按 Enter 繼續」橫幅與 MCP `send_enter`。
   - **雙通道投遞**：① 寫 `\r\n` 到步驟行程的 stdin pipe；② `AttachConsole` 附加到步驟行程樹的主控台，以 `WriteConsoleInput` 注入 VK_RETURN（`build_runner/console.py`）。第 ② 條是必要的：`getpass` 類提示直接從主控台讀字元、題目也不會進 log，只有 pipe 通道會漏掉。任一通道送達即算成功，才清掉 `enter.request` 旗標。未被當前提示吃掉的 Enter 會滯留佇列、可能答到後續的主控台讀取（例如 bat 結尾的 `pause`）——自動模式以每次注入前 Flush＋每 Job 上限 5 次封頂，此取換在「全部提示都要跳過」的場景下可接受。
   - `inject_enter()` 開頭先 `FreeConsole()`（呼叫端自帶主控台時 `AttachConsole` 回 ACCESS_DENIED），結束後若原本有主控台以 `AttachConsole(ATTACH_PARENT_PROCESS)` 還原（僅對繼承自父行程的主控台保證是同一個；生產 runner 為 DETACHED，不受影響）。注入前主控台輸入佇列先 Flush 確保只剩這次 Enter——若操作人員正在可見的步驟視窗裡親手輸入，其輸入會被一併清掉。
 
@@ -123,6 +123,7 @@ Dev-Toolbox 第四個工具：管理多個程式碼資料夾、用可自訂的�
   "name": "release-rules",
   "rules": [
     {
+      "root": "workspace",
       "select": ["Build/**/*.bin", "Build/**/*.cap"],
       "exclude": ["**/temp/**"],
       "rename": "{name}_{branch}_{date}_{commit7}{ext}",
@@ -135,6 +136,8 @@ Dev-Toolbox 第四個工具：管理多個程式碼資料夾、用可自訂的�
 ```
 
 - 每條規則：挑檔（glob）→ 排除 → 改名 → 複製到目的地 → 可選壓縮。可多條規則，不同檔案放不同地方。
+- `root`（預設 `workspace`）決定 glob 與相對 `dest` 的錨點：`workspace`＝Workspace 資料夾；`repo`＝Git 工作樹頂層（`git rev-parse --show-toplevel`），用於「Workspace 是平台資料夾、Build 產出在 repo 根 `Build\`」的 Dell 佈局；Workspace 不在 checkout 內時該規則報錯。glob 仍不得含 `..`、盤符或絕對路徑（不得再逃出錨點）；`dest` 可絕對路徑，相對時落在錨點下。plan 檔逐筆記 `base`，舊 plan 無 `base` 時視為 workspace。
+- 內建 BIOS ROM 打包規則（`@builtin:bios-rom-package`）即用 `root: "repo"`。
 - 變數：`{workspace} {name} {ext} {branch} {commit7} {date} {time} {jobId} {recipe}`，以及參數值 `{param.plat}`。
 - 介面上可「預覽」：列出會被挑到的檔案和改名後的結果，確認後才執行。
 - 目的地已有同名檔時：預設加序號，不覆蓋。
@@ -202,7 +205,7 @@ exit code 照 TOOL-SPEC（0 成功、1 失敗、3 參數錯、4 取消、5 環�
 
 | 方法與路徑 | 用途 |
 | --- | --- |
-| `GET/POST/DELETE /api/workspaces` | Workspace 管理；`POST /api/workspaces/import-worktrees` |
+| `GET/POST/DELETE /api/workspaces` | Workspace 管理；GET 不吃 `git status`（大 repo 慢），未提交變更要由 `GET /api/workspaces/dirty`（並行檢查各 Workspace）取；`POST /api/workspaces/import-worktrees` |
 | `POST /api/workspaces/<id>/git` | `{ action: refresh|pull|checkout, branch }` |
 | `GET/POST/DELETE /api/paramsets`、`POST /api/paramsets/import` | 參數表 |
 | `GET/POST/DELETE /api/recipes` | Recipe |

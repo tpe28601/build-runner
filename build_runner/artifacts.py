@@ -38,7 +38,7 @@ def patterns(value, field):
         pattern = required_text(item, field).replace("\\", "/")
         path = PurePosixPath(pattern)
         if path.is_absolute() or ".." in path.parts or ":" in pattern or not path.parts:
-            raise invalid(f"{field} cannot leave the Workspace.")
+            raise invalid(f"{field} cannot leave the artifact root.")
         components = []
         for part in path.parts:
             if part != "**" or not components or components[-1] != "**":
@@ -58,6 +58,9 @@ def normalize(config):
     for row in rules:
         if not isinstance(row, dict) or row.get("when", "success") != "success":
             raise invalid("Artifact rules must run after success.")
+        source_root = row.get("root", "workspace")
+        if source_root not in ("workspace", "repo"):
+            raise invalid("Artifact rule root must be workspace or repo.")
         select = patterns(row.get("select"), "select")
         if not select:
             raise invalid("An artifact rule needs at least one selection pattern.")
@@ -72,7 +75,7 @@ def normalize(config):
             "exclude": patterns(row.get("exclude", []), "exclude"),
             "rename": required_text(row.get("rename", "{name}{ext}"), "rename"),
             "dest": required_text(row.get("dest"), "dest"),
-            "zip": archive, "when": "success",
+            "zip": archive, "when": "success", "root": source_root,
         })
     return {"name": name, "rules": rows}
 
@@ -181,7 +184,7 @@ def destination(root, value):
     if not path.is_absolute():
         path = (root / path).resolve()
         if not path.is_relative_to(root):
-            raise invalid("Relative destinations must stay inside the Workspace.")
+            raise invalid("Relative destinations must stay inside the artifact root.")
     return path.resolve()
 
 
@@ -194,6 +197,17 @@ def available(path, reserved):
             return candidate
         candidate = path.with_name(f"{path.stem}_{number}{path.suffix}")
     raise ToolError("ARTIFACT_COLLISION_LIMIT", "Too many output filename collisions.", 1)
+
+
+def rule_base(rule, workspace, context):
+    """Folder a rule's patterns and relative destination are anchored to."""
+    if rule.get("root", "workspace") != "repo":
+        return workspace
+    repo = context.get("repoRoot")
+    base = Path(repo).resolve() if isinstance(repo, str) and repo.strip() else None
+    if base is None or not base.is_dir():
+        raise invalid("The rule uses the Git repository root, but the Workspace is not inside a checkout.")
+    return base
 
 
 def preview(workspace, config, context):
@@ -209,11 +223,12 @@ def preview(workspace, config, context):
     plan = {"workspacePath": str(root), "files": [], "archives": []}
     reserved = set()
     for index, rule in enumerate(config["rules"], 1):
+        base = rule_base(rule, root, context)
         excludes = [tuple(pattern.split("/")) for pattern in rule["exclude"]]
         sources = {}
         for pattern in rule["select"]:
-            for path in candidates(root, tuple(pattern.split("/")), excludes):
-                relative = path.relative_to(root).as_posix()
+            for path in candidates(base, tuple(pattern.split("/")), excludes):
+                relative = path.relative_to(base).as_posix()
                 if any(matches(tuple(relative.split("/")), exclude) for exclude in excludes):
                     continue
                 sources[relative] = path
@@ -222,10 +237,10 @@ def preview(workspace, config, context):
         groups = {}
         for relative, path in sorted(sources.items()):
             file_values = {**values, "name": clean_variable(path.stem), "ext": clean_variable(path.suffix)}
-            dest = destination(root, render(rule["dest"], file_values))
+            dest = destination(base, render(rule["dest"], file_values))
             target = dest / filename(render(rule["rename"], file_values))
             output = available(target, reserved)
-            plan["files"].append({"id": len(plan["files"]), "rule": index, "source": relative,
+            plan["files"].append({"id": len(plan["files"]), "rule": index, "source": relative, "base": str(base),
                                   "destination": str(output), "requested": str(target)})
             groups.setdefault(dest, []).append(plan["files"][-1]["id"])
         if rule["zip"]["enabled"]:
@@ -275,14 +290,15 @@ def zip_files(paths, stream):
 
 
 def execute(plan):
-    root = Path(plan["workspacePath"]).resolve()
     result = {"files": [], "archives": [], "errors": []}
     copied = {}
     for entry in plan["files"]:
-        source = root / entry["source"]
+        # Older plans have no per-entry base; they were all Workspace-anchored.
+        base = Path(entry.get("base", plan["workspacePath"])).resolve()
+        source = base / entry["source"]
         try:
-            if not source.resolve().is_relative_to(root) or not source.is_file() or not safe_entry(source):
-                raise invalid("Source no longer exists in the Workspace.")
+            if not source.resolve().is_relative_to(base) or not source.is_file() or not safe_entry(source):
+                raise invalid("Source no longer exists at the artifact root.")
             actual = write_unique(Path(entry["destination"]), Path(entry["requested"]),
                                   lambda stream: copy_file(source, stream))
             copied[entry["id"]] = actual

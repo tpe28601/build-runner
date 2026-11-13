@@ -100,6 +100,8 @@ class Api:
         if method == "POST" and path == "/api/shutdown":
             threading.Thread(target=self.server.shutdown, daemon=True).start()
             return ok({"closing": True})
+        if method == "GET" and path == "/api/workspaces/dirty":
+            return ok(workspaces.dirty_flags(self.data))
         if path == "/api/workspaces":
             return self.workspace_route(method, body)
         if method == "POST" and path == "/api/browse":
@@ -313,7 +315,10 @@ class Api:
     def workspace_route(self, method, body):
         if method == "GET":
             last = {row["workspaceId"]: row["state"] for row in history.list_history(self.data)}
-            return ok([{**row, **workspaces.git_state(row["path"]), "lastResult": last.get(row["id"])}
+            # Keep the list fast: "git status" is slow on huge trees and the
+            # page fills the dirty badge afterwards via /workspaces/dirty.
+            return ok([{**row, **workspaces.git_state(row["path"], include_dirty=False),
+                        "lastResult": last.get(row["id"])}
                        for row in workspaces.list_workspaces(self.data)])
         if method == "POST" and "id" not in body:
             return ok(workspaces.add_workspace(self.data, string(body, "name"), string(body, "path")), 201)
@@ -510,12 +515,14 @@ class Api:
         config = artifacts.load(self.data, string(body, "name"))
         workspace = self.workspace_by_id(string(body, "workspaceId"))
         preview_id = uuid4().hex
-        context = {"workspace": workspace["name"], "jobId": preview_id, **workspaces.git_state(workspace["path"], False)}
+        context = {"workspace": workspace["name"], "jobId": preview_id,
+                   "repoRoot": workspaces.repo_root(workspace["path"]),
+                   **workspaces.git_state(workspace["path"], False)}
         if body.get("jobId"):
             job = jobs.get_job(self.data, string(body, "jobId"))
             if job["workspaceId"] != workspace["id"] or job["state"] != "success":
                 raise HttpError(400, "INVALID_ARTIFACT_JOB", "請選擇此 Workspace 已成功的 Job。")
-            context = {**job, "jobId": job["id"]}
+            context = {**job, "jobId": job["id"], "repoRoot": workspaces.repo_root(workspace["path"])}
         plan = artifacts.preview(workspace["path"], config, context)
         with self.mutations:
             while len(self.artifact_previews) >= 20:

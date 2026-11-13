@@ -2,9 +2,9 @@
   "name": "BIOS ROM 打包範例",
   "rules": [
     {
+      "root": "repo",
       "select": [
-        "Build/DT/XXXXpkg/RELEASE_CLANGPDB/ReleaseBIOS/XXXX_1557C_UNSIGNEC1.rom",
-        "Build/DT/XXXXpkg/RELEASE_CLANGPDB/ReleaseBIOS/XXXX_1557C_UNSIGNEC2.rom"
+        "Build/DT/XXXXpkg/RELEASE_CLANGPDB/ReleaseBIOS/*.rom"
       ],
       "exclude": [],
       "rename": "{name}{ext}",

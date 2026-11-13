@@ -495,6 +495,7 @@ listen($("conflict-form"), "submit", async () => {
 
 function defaultArtifactRule() {
   return {
+    root: "workspace",
     select: ["Build/**/*.bin"], exclude: ["**/temp/**"], rename: "{name}{ext}",
     dest: "Artifacts/{date}", zip: { enabled: false, file: "{workspace}_{date}_{time}.zip" }, when: "success",
   };
@@ -523,7 +524,7 @@ function editArtifactRule(rule) {
 function artifactSelectPatterns(sourceDir, selectText) {
   const folder = sourceDir.trim() ? sourceDir.replaceAll("\\", "/") : "";
   if (folder.startsWith("/") || /[:*?\[]/.test(folder) || folder.split("/").includes("..")) {
-    throw new Error("Build 產出資料夾必須是 Workspace 內的相對路徑。");
+    throw new Error("Build 產出資料夾必須是資料來源內的相對路徑。");
   }
   const patterns = folder
     ? selectText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean)
@@ -564,12 +565,22 @@ function renderArtifactRules() {
       rule[key] = value;
       markArtifactDirty();
     }, options);
+    const source = element("select", "tb-select");
+    source.append(new Option("Workspace（builda.bat 所在資料夾）", "workspace"), new Option("Repo 根（Git 工作樹頂層）", "repo"));
+    source.value = rule.root || "workspace";
+    source.addEventListener("change", () => {
+      rule.root = source.value;
+      markArtifactDirty();
+    });
+    const sourceField = element("label", "tb-field");
+    sourceField.append(element("span", "tb-field__label", "資料來源"), source);
     item.append(
-      field("Build 產出資料夾（相對 Workspace）", "sourceDir", { folder: "relative" }),
+      sourceField,
+      field("Build 產出資料夾（相對資料來源）", "sourceDir", { folder: "relative" }),
       field("檔名或 Glob（每行一條）", "selectText", { rows: 2 }),
-      field("排除 Glob（相對 Workspace，每行一條）", "excludeText", { rows: 2 }),
+      field("排除 Glob（相對資料來源，每行一條）", "excludeText", { rows: 2 }),
       field("改名範本", "rename"),
-      field("複製目的地", "dest", { folder: "absolute" }),
+      field("複製目的地（可絕對路徑；相對時置於資料來源下）", "dest", { folder: "absolute" }),
       editorCheck("另外建立 ZIP", rule.zip.enabled, (value) => {
         rule.zip.enabled = value;
         markArtifactDirty();

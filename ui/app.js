@@ -273,16 +273,6 @@ function jobCard(row) {
     foot.append(jobActionButton(row, "stop", label, "square", true));
   }
   if (canRestartJob(row)) foot.append(jobActionButton(row, "restart", "重新建置", "refresh-cw"));
-  if (row.state === "running") {
-    // 給卡住的互動提示（账号/密码/passphrase）送一個 Enter；後端 runner 0.5 秒內送入。
-    const enter = button("送 Enter", async () => {
-      await api("/jobs/" + row.id + "/enter", "POST");
-      announce("已送出 Enter，等待輸入的步驟會繼續。");
-      enter.disabled = true;
-      setTimeout(() => { enter.disabled = false; }, 3000);
-    });
-    foot.append(enter);
-  }
   foot.append(elapsed);
   card.append(head, details);
   if (row.step || activeStates.has(row.state)) card.append(step);
@@ -348,8 +338,33 @@ async function refreshWorkspaces() {
   workspaces = result;
   const ids = new Set(result.map((row) => row.id));
   for (const id of selected) if (!ids.has(id)) selected.delete(id);
-  if (page === "workspaces") renderWorkspaces();
+  if (page === "workspaces") {
+    renderWorkspaces();
+    void loadWorkspaceDirty();   // badges fill in afterwards; the list stays instant
+  }
   if (page === "build") renderBuildChoices();
+}
+
+let dirtyBusy = false;
+
+async function loadWorkspaceDirty() {
+  if (dirtyBusy) return;   // a running scan merges into the refreshed rows anyway
+  dirtyBusy = true;
+  try {
+    const { result } = await api("/workspaces/dirty");
+    let changed = false;
+    for (const row of workspaces) {
+      if (row.id in result && row.dirty !== result[row.id]) {
+        row.dirty = result[row.id];
+        changed = true;
+      }
+    }
+    if (changed && page === "workspaces") renderWorkspaces();
+  } catch {
+    // The badges simply stay blank until the next refresh.
+  } finally {
+    dirtyBusy = false;
+  }
 }
 
 function renderWorkspaces() {
@@ -370,8 +385,9 @@ function workspaceCard(row) {
     checkbox.click();
   });
   card.append(head, element("p", "tb-mono workspace-path", row.path));
+  const dirtyLabel = row.dirty === null || row.dirty === undefined ? "" : row.dirty ? "有未提交變更" : "工作樹乾淨";
   const metadata = row.gitCommonDir ?
-    [row.branch || "detached HEAD", row.commit, row.subject, row.dirty ? "有未提交變更" : "工作樹乾淨"].filter(Boolean).join(" · ") :
+    [row.branch || "detached HEAD", row.commit, row.subject, dirtyLabel].filter(Boolean).join(" · ") :
     "非 Git 資料夾";
   card.append(element("p", "git-meta tb-muted", metadata));
   const actions = element("div", "row");

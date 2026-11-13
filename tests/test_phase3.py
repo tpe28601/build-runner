@@ -117,6 +117,28 @@ class ArtifactTests(unittest.TestCase):
             with self.assertRaises(ToolError):
                 artifacts.preview(root, config, {})
 
+    def test_repo_root_rule_collects_outside_the_workspace(self):
+        with tempfile.TemporaryDirectory() as temp:
+            repo = Path(temp) / "repo"
+            workspace = repo / "DellPkgs" / "Platform"
+            roms = repo / "Build" / "DT" / "Pkg"
+            roms.mkdir(parents=True)
+            workspace.mkdir(parents=True)
+            (roms / "bios.rom").write_bytes(b"rom")
+            config = artifacts.normalize({"name": "ROM", "rules": [{
+                "root": "repo", "select": ["Build/DT/Pkg/*.rom"], "dest": "Artifacts",
+            }]})
+            self.assertEqual(config["rules"][0]["root"], "repo")
+            with self.assertRaises(ToolError):
+                artifacts.preview(workspace, config, {})   # the context carries no repo root
+            plan = artifacts.preview(workspace, config, {"repoRoot": str(repo)})
+            self.assertEqual([row["source"] for row in plan["files"]], ["Build/DT/Pkg/bios.rom"])
+            result = artifacts.execute(plan)
+            self.assertEqual(result["errors"], [])
+            self.assertEqual((repo / "Artifacts" / "bios.rom").read_bytes(), b"rom")
+        with self.assertRaises(ToolError):
+            artifacts.normalize({"name": "Bad", "rules": [{"root": "elsewhere", "select": ["a"], "dest": "out"}]})
+
     @unittest.skipUnless(os.name == "nt", "Uses a Windows build script")
     def test_cli_preset_reaches_runner_and_artifacts_are_recorded_after_success(self):
         tool = Path(__file__).resolve().parents[1]

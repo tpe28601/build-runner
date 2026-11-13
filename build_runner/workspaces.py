@@ -1,6 +1,7 @@
 """Workspace registry and local Git metadata."""
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import stat
 import subprocess
@@ -179,6 +180,29 @@ def git_state(path, include_dirty=True):
         "subject": subject or None,
         "dirty": bool(dirty) if dirty is not None else None,
     }
+
+
+def dirty_flags(data):
+    """Check every workspace for uncommitted changes in parallel.
+
+    ``git status`` is slow on large trees, so the workspace list answers
+    without it and the page fills its badges from this map.
+    """
+    rows = list_workspaces(data)
+    if not rows:
+        return {}
+
+    def check(row):
+        outcome = git(row["path"], "status", "--porcelain")
+        return row["id"], None if outcome is None else bool(outcome)
+
+    with ThreadPoolExecutor(max_workers=min(4, len(rows))) as pool:
+        return dict(pool.map(check, rows))
+
+
+def repo_root(path):
+    """Working tree top level, or None when the folder is not a checkout."""
+    return git(path, "rev-parse", "--show-toplevel") or None
 
 
 def list_worktrees(path):

@@ -143,6 +143,7 @@ class WebTests(unittest.TestCase):
         artifact = self.api("GET", "/api/artifact-rules")["result"][0]
         self.assertEqual(builtins[2]["artifacts"], artifact["id"])
         self.assertTrue(artifact["builtIn"])
+        self.assertEqual(artifact["rules"][0]["root"], "repo")
         self.assertTrue(artifact["rules"][0]["zip"]["enabled"])
         self.api("POST", "/api/artifact-rules", {**artifact, "confirm": True}, code=400)
         self.api("DELETE", "/api/artifact-rules", {"name": artifact["id"], "confirm": True}, code=400)
@@ -453,3 +454,39 @@ class WebTests(unittest.TestCase):
             replacement = self.api("GET", "/api/jobs/" + replacement["id"])["result"]
         self.assertEqual(replacement["state"], "success", replacement)
         self.api("POST", "/api/jobs/" + replacement["id"] + "/restart", {"confirm": True}, code=409)
+
+    def test_artifact_preview_for_a_job_keeps_the_repo_root(self):
+        repo = self.root / "Repo package"
+        (repo / "DellPkgs" / "DT" / "Platform").mkdir(parents=True)
+        roms = repo / "Build" / "DT" / "Pkg"
+        roms.mkdir(parents=True)
+        (roms / "bios.rom").write_bytes(b"rom")
+        subprocess.check_call(["git", "-C", str(repo), "init"],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+        workspace = self.api("POST", "/api/workspaces", {"name": repo.name, "path": str(repo)}, code=201)["result"]
+        self.api("POST", "/api/artifact-rules", {"name": "Repo rule", "rules": [
+            {"root": "repo", "select": ["Build/DT/Pkg/*.rom"], "dest": "out"}]}, code=201)
+        job_id = "d" * 32
+        folder = self.data / "jobs" / job_id
+        folder.mkdir(parents=True)
+        (folder / "status.json").write_text(json.dumps(
+            {"id": job_id, "workspace": repo.name, "workspaceId": workspace["id"], "recipe": "Sample",
+             "argv": ["builda.bat", "-r"], "state": "success", "branch": "main",
+             "queuedAt": "2026-11-01T00:00:00+00:00", "startedAt": "2026-11-01T00:00:01+00:00",
+             "endedAt": "2026-11-01T00:10:00+00:00", "exitCode": 0}), encoding="utf-8")
+        plan = self.api("POST", "/api/artifact-rules/preview",
+                        {"name": "Repo rule", "workspaceId": workspace["id"], "jobId": job_id})["result"]
+        self.assertEqual([row["source"] for row in plan["files"]], ["Build/DT/Pkg/bios.rom"])
+
+    def test_workspace_list_defers_dirty_checks(self):
+        workspace = self.root / "Dirty sample"
+        workspace.mkdir()
+        row = self.api("POST", "/api/workspaces", {"name": workspace.name, "path": str(workspace)}, code=201)["result"]
+        listed = {item["id"]: item for item in self.api("GET", "/api/workspaces")["result"]}
+        self.assertIsNone(listed[row["id"]]["dirty"])   # the fast list path skips git status
+        self.assertIsNone(self.api("GET", "/api/workspaces/dirty")["result"][row["id"]])  # not a Git repo
+        subprocess.check_call(["git", "-C", str(workspace), "init"],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+        self.assertIs(self.api("GET", "/api/workspaces/dirty")["result"][row["id"]], False)
+        (workspace / "draft.txt").write_text("change\n", encoding="utf-8")
+        self.assertIs(self.api("GET", "/api/workspaces/dirty")["result"][row["id"]], True)
