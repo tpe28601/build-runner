@@ -9,6 +9,8 @@ if defined TB_ACTIVE_TOOL (
 )
 if defined DEVTOOLBOX_PYTHON (
     "%DEVTOOLBOX_PYTHON%" "%~dp0build_runner\web.py" --open-browser %*
+) else if exist "%~dp0runtime\python\python.exe" (
+    "%~dp0runtime\python\python.exe" "%~dp0build_runner\web.py" --open-browser %*
 ) else if exist "%~dp0.venv\Scripts\python.exe" (
     "%~dp0.venv\Scripts\python.exe" "%~dp0build_runner\web.py" --open-browser %*
 ) else (

@@ -10,6 +10,8 @@ if defined TB_ACTIVE_TOOL (
 set "PYTHONPATH=%~dp0;%PYTHONPATH%"
 if defined DEVTOOLBOX_PYTHON (
     "%DEVTOOLBOX_PYTHON%" -m build_runner.cli %*
+) else if exist "%~dp0runtime\python\python.exe" (
+    "%~dp0runtime\python\python.exe" -m build_runner.cli %*
 ) else if exist "%~dp0.venv\Scripts\python.exe" (
     "%~dp0.venv\Scripts\python.exe" -m build_runner.cli %*
 ) else (
