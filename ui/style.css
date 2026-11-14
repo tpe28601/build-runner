@@ -207,6 +207,7 @@ input[type="file"] { min-width: 0; max-width: 100%; }
 .pack-row .tb-select { width: auto; min-width: 110px; }
 .pack-warning { margin: 0; color: var(--tb-warn); overflow-wrap: anywhere; }
 #toast { overflow-wrap: anywhere; }
+#toast[hidden] { display: none; }
 .operation-card { margin: 12px 0; }
 .operation-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(160px, 100%), 1fr)); gap: 10px; align-items: end; }
 #ai-panel .row { align-items: end; }

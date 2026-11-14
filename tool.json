@@ -3,7 +3,7 @@
   "kind": "tool",
   "id": "build-runner",
   "name": "Build Runner",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "本機建置、Recipe、Log、產出物與排程",
   "runtime": { "kind": "python", "min": "3.10" },
   "web": { "entry": "build_runner/web.py", "defaultPort": 8740, "health": "/api/health" },
