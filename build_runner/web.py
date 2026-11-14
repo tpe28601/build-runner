@@ -86,8 +86,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
         ancestors = " ".join(("'self'", *self.server.hub_origins))
+        theme_sources = " ".join(f"{origin}/tool-theme.css" for origin in self.server.hub_origins)
         self.send_header("Content-Security-Policy",
-                         f"default-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors {ancestors}")
+                         f"default-src 'self'; style-src 'self' {theme_sources}; "
+                         f"base-uri 'none'; form-action 'none'; frame-ancestors {ancestors}")
         self.send_header("Cache-Control", "no-store")
         super().end_headers()
 
