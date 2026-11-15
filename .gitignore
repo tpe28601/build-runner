@@ -5,3 +5,5 @@ recipes/
 paramsets/
 artifacts/
 schedules/
+/updates/
+/.updates-*.tmp/
