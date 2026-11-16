@@ -122,7 +122,7 @@ def get_workspace(data, name):
         match = next((row for row in rows if row[key].casefold() == name.casefold()), None)
         if match is not None:
             return match
-    raise ToolError("WORKSPACE_NOT_FOUND", f"Workspace not found: {name}")
+    raise ToolError("WORKSPACE_NOT_FOUND", f"找不到 Workspace：{name}")
 
 
 def path_key(path):
@@ -133,12 +133,12 @@ def add_workspace(data, name, path):
     name = name.strip()
     path = Path(path).expanduser().resolve()
     if not name or not path.is_dir():
-        raise ToolError("INVALID_WORKSPACE", "Provide a name and an existing workspace folder.")
+        raise ToolError("INVALID_WORKSPACE", "請輸入名稱，並選擇已存在的 Workspace 資料夾。")
     with file_lock(data / ".workspaces.lock"):
         rows = list_workspaces(data)
         if any(row["name"].casefold() == name.casefold() or path_key(row["path"]) == path_key(path)
                for row in rows):
-            raise ToolError("WORKSPACE_EXISTS", "Workspace name or folder already exists.")
+            raise ToolError("WORKSPACE_EXISTS", "已有相同名稱或資料夾的 Workspace。")
         row = {"id": uuid4().hex, "name": name, "path": str(path)}
         write_json(data / "workspaces.json", [*rows, row])
     return row

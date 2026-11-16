@@ -212,6 +212,11 @@ class Handler(BaseHTTPRequestHandler):
             path, _, raw_query = self.path.partition("?")
             if method == "POST" and path == "/api/standalone-update":
                 if self.server.managed:
+                    # Started by the Hub: report "managed, no standalone update" instead of 403 (no browser error);
+                    # opening the standalone updater is still refused.
+                    if isinstance(body, dict) and body.get("action") == "check":
+                        self.send_json(200, {"ok": True, "update": None, "managed": True})
+                        return
                     raise HttpError(403, "MANAGED_BY_HUB", "請從 Hub 更新工具。")
                 self.send_json(200, handle_update(ROOT, body))
                 return

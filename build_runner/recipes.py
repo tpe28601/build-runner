@@ -22,9 +22,9 @@ def builtin_recipe(record_id=BUILTIN_ID):
     sample = dict(BUILTIN_RECIPES)[record_id]
     config = read_json(ROOT / "examples" / sample)
     if config is None:
-        raise ToolError("RECIPE_NOT_FOUND", f"Built-in recipe sample is missing: {sample}")
+        raise ToolError("RECIPE_NOT_FOUND", f"找不到內建 Recipe 範本：{sample}")
     if not isinstance(config, dict):
-        raise ToolError("INVALID_RECIPE", f"Built-in recipe sample is invalid: {sample}")
+        raise ToolError("INVALID_RECIPE", f"內建 Recipe 範本格式錯誤：{sample}")
     return {**config, "id": record_id, "builtIn": True}
 
 
@@ -60,76 +60,76 @@ def get_recipe(data, name):
         for builtin in builtin_recipes():
             if str(builtin.get("name", "")).casefold() == name.casefold():
                 return builtin
-        raise ToolError("RECIPE_NOT_FOUND", f"Recipe not found: {name}")
+        raise ToolError("RECIPE_NOT_FOUND", f"找不到 Recipe：{name}")
     if not isinstance(recipe, dict) or not isinstance(recipe.get("steps"), list):
-        raise ToolError("INVALID_RECIPE", "Recipe must contain a list of steps.")
+        raise ToolError("INVALID_RECIPE", "Recipe 必須包含步驟清單。")
     return recipe
 
 
 def validate(record):
     """Structural check for a saved or imported Recipe (no Workspace needed)."""
     if not isinstance(record, dict):
-        raise ToolError("INVALID_RECIPE", "A Recipe must be a JSON object.")
+        raise ToolError("INVALID_RECIPE", "Recipe 必須是 JSON 物件。")
     steps = record.get("steps")
     if not isinstance(steps, list) or not steps or any(
             not isinstance(step, dict) or not isinstance(step.get("argv"), list) or not step["argv"]
             or any(not isinstance(arg, str) or "\0" in arg for arg in step["argv"]) or not step["argv"][0]
             for step in steps):
-        raise ToolError("INVALID_RECIPE", "A Recipe needs steps with a nonempty argv array.")
+        raise ToolError("INVALID_RECIPE", "Recipe 的每個步驟都需要非空的 argv 陣列。")
     env = record.get("env", {})
     timeout = record.get("timeoutMin", 180)
     if (not isinstance(env, dict)
             or any(not key or "=" in key or "\0" in key or not isinstance(value, str) or "\0" in value
                    for key, value in env.items())
             or type(timeout) is not int or timeout < 1):
-        raise ToolError("INVALID_RECIPE", "env must map names to strings and timeoutMin must be a positive integer.")
+        raise ToolError("INVALID_RECIPE", "env 必須是「名稱 → 文字」的對應，timeoutMin 必須是正整數。")
     for field in ("paramset", "artifacts"):
         if record.get(field) is not None and not isinstance(record.get(field), str):
-            raise ToolError("INVALID_RECIPE", f"{field} must be a name.")
+            raise ToolError("INVALID_RECIPE", f"{field} 必須是名稱。")
     return record
 
 
 def prepare(workspace, recipe, preset=None, *, table=None, overrides=None):
     root = Path(workspace["path"]).resolve()
     if not root.is_dir():
-        raise ToolError("INVALID_WORKSPACE", f"Workspace folder does not exist: {root}")
+        raise ToolError("INVALID_WORKSPACE", f"Workspace 資料夾不存在：{root}")
     env = recipe.get("env", {})
     if not isinstance(env, dict) or any(
         not key or "=" in key or "\0" in key or not isinstance(value, str) or "\0" in value
         for key, value in env.items()
     ):
-        raise ToolError("INVALID_RECIPE", "Recipe environment must contain valid names and string values.")
+        raise ToolError("INVALID_RECIPE", "Recipe 的環境變數名稱必須有效，值必須是文字。")
     timeout = recipe.get("timeoutMin", 180)
     if type(timeout) is not int or timeout < 1:
-        raise ToolError("INVALID_RECIPE", "timeoutMin must be a positive integer.")
+        raise ToolError("INVALID_RECIPE", "timeoutMin 必須是正整數。")
     steps = []
     values = {}
     used_table = False
     for index, step in enumerate(recipe["steps"], 1):
         if not isinstance(step, dict):
-            raise ToolError("INVALID_RECIPE", f"Invalid step {index}.")
+            raise ToolError("INVALID_RECIPE", f"第 {index} 個步驟格式錯誤。")
         if step.get("enabled") is False:
             continue
         argv = step.get("argv")
         if (not isinstance(argv, list) or not argv
                 or any(not isinstance(arg, str) or "\0" in arg for arg in argv) or not argv[0]):
-            raise ToolError("INVALID_RECIPE", f"Step {index} must provide a nonempty argv array.")
+            raise ToolError("INVALID_RECIPE", f"第 {index} 個步驟必須提供非空的 argv 陣列。")
         if step.get("useParams") and table is not None:
             args, values = paramsets.resolve(table, preset if preset is not None else step.get("preset"), overrides)
             argv = [*argv, *args]
             used_table = True
         elif step.get("useParams") and step.get("preset"):
-            raise ToolError("PARAMSET_REQUIRED", "A preset requires a parameter table.")
+            raise ToolError("PARAMSET_REQUIRED", "使用預設參數時必須選擇參數表。")
         cwd = step.get("cwd", ".")
         if not isinstance(cwd, str):
-            raise ToolError("INVALID_RECIPE", f"Invalid cwd for step {index}.")
+            raise ToolError("INVALID_RECIPE", f"第 {index} 個步驟的工作資料夾（cwd）格式錯誤。")
         cwd = (root / cwd).resolve()
         if not cwd.is_relative_to(root) or not cwd.is_dir():
-            raise ToolError("INVALID_RECIPE", f"Step {index} cwd must be an existing folder inside the workspace.")
+            raise ToolError("INVALID_RECIPE", f"第 {index} 個步驟的工作資料夾（cwd）必須是 Workspace 內已存在的資料夾。")
         if recipe.get("id") in BUILTIN_IDS:
             script = cwd / argv[0]
             if not script.is_file():
-                raise ToolError("BUILTIN_SCRIPT_NOT_FOUND", "Clean + Build requires builda.bat in the Workspace root.")
+                raise ToolError("BUILTIN_SCRIPT_NOT_FOUND", "Clean + Build 需要 Workspace 根目錄有 builda.bat。")
             argv = [str(script), *argv[1:]]
         steps.append({
             "name": step.get("name") or f"Step {index}",
@@ -139,21 +139,21 @@ def prepare(workspace, recipe, preset=None, *, table=None, overrides=None):
             "continueOnFail": step.get("continueOnFail") is True,
         })
     if not steps:
-        raise ToolError("INVALID_RECIPE", "Recipe has no enabled steps.")
+        raise ToolError("INVALID_RECIPE", "這個 Recipe 沒有啟用的步驟。")
     if not used_table and (preset is not None or overrides):
-        raise ToolError("PARAMSET_REQUIRED", "This Recipe has no enabled step that uses a parameter table.")
+        raise ToolError("PARAMSET_REQUIRED", "這個 Recipe 沒有使用參數表的啟用步驟。")
     return {"workspacePath": str(root), "steps": steps, "env": env, "timeoutSec": timeout * 60, "params": values}
 
 
 def validate_batch(argv):
     if argv[0].endswith((" ", ".")):
-        raise ToolError("INVALID_EXECUTABLE", "Executable names cannot end with a space or dot.")
+        raise ToolError("INVALID_EXECUTABLE", "執行檔名稱不能以空白或句點結尾。")
     if Path(argv[0]).suffix.lower() not in (".bat", ".cmd"):
         return False
     if os.name != "nt":
-        raise ToolError("WINDOWS_REQUIRED", "Batch files require Windows.", 5)
+        raise ToolError("WINDOWS_REQUIRED", "批次檔只能在 Windows 上執行。", 5)
     if any(re.search(r'["\r\n]', arg) for arg in argv):
-        raise ToolError("UNSAFE_BATCH_ARGUMENT", "Batch arguments cannot contain double quotes or newlines.")
+        raise ToolError("UNSAFE_BATCH_ARGUMENT", "批次檔參數不能包含雙引號或換行。")
     return True
 
 

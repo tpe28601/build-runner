@@ -34,14 +34,14 @@ def git_lock_path(data):
 
 def job_dir(data, job_id):
     if not re.fullmatch(r"[a-f0-9]{32}", job_id):
-        raise ToolError("INVALID_JOB_ID", f"Invalid job ID: {job_id}")
+        raise ToolError("INVALID_JOB_ID", f"Job ID 格式錯誤：{job_id}")
     return data / "jobs" / job_id
 
 
 def get_job(data, job_id):
     row = read_json(job_dir(data, job_id) / "status.json")
     if row is None:
-        raise ToolError("JOB_NOT_FOUND", f"Job not found: {job_id}")
+        raise ToolError("JOB_NOT_FOUND", f"找不到 Job：{job_id}")
     return row
 
 
@@ -198,7 +198,7 @@ def check_conflicts(data, path, common, force=False, *, rows=None):
             continue
         if workspaces.path_key(row["workspacePath"]) == key:
             if not force:
-                raise ToolError("WORKSPACE_CONFLICT", "This folder already has an active job.", jobId=row["id"])
+                raise ToolError("WORKSPACE_CONFLICT", "同一資料夾已有執行中或排隊的 Job。", jobId=row["id"])
             warnings.append({"code": "WORKSPACE_CONFLICT", "message": "Same workspace folder.", "jobId": row["id"]})
         elif common and row.get("gitCommonDir") == common:
             warnings.append({"code": "SHARED_GIT_DIR", "message": "Workspaces share a Git repository.", "jobId": row["id"]})
@@ -251,20 +251,20 @@ def start_many(data, workspace_rows, recipe_name, preset=None, *, force=False, d
     table = paramsets.load(data, recipe["paramset"]) if uses_params and recipe.get("paramset") else None
     artifact_rules = artifacts.load(data, recipe["artifacts"]) if recipe.get("artifacts") else None
     if overrides is not None and not isinstance(overrides, dict):
-        raise ToolError("INVALID_PARAMS", "params must be an object.")
+        raise ToolError("INVALID_PARAMS", "參數（params）必須是物件。")
     if restrict_values and table and overrides:
         for param in table["params"]:
             value = overrides.get(param["key"])
             if (param["type"] == "value" and isinstance(value, str)
                     and (re.search(r'[&|<>^%!()"\r\n\x00]', value) or value.lstrip().startswith(("-", "/", "@")))):
-                raise ToolError("INVALID_PARAM_VALUE", f"Unsafe free-form value for {param['flag']}.")
+                raise ToolError("INVALID_PARAM_VALUE", f"{param['flag']} 的自訂值包含不安全的字元。")
     plans = [job_plan(row, recipe, recipe_name, preset, table, overrides, artifact_rules) for row in workspace_rows]
     if not dry_run and os.name != "nt":
-        raise ToolError("WINDOWS_REQUIRED", "Running jobs requires Windows.", 5)
+        raise ToolError("WINDOWS_REQUIRED", "只能在 Windows 上執行 Job。", 5)
 
     def validate(rows):
         if git_lock_path(data).exists():
-            raise ToolError("JOB_BUSY", "A Git operation is in progress. Retry after it finishes.", 1)
+            raise ToolError("JOB_BUSY", "Git 操作進行中，請等它完成後再試。", 1)
         warnings = []
         for preview, _ in plans:
             warnings.extend(check_conflicts(data, preview["workspacePath"], preview["gitCommonDir"], force, rows=rows))
@@ -356,7 +356,7 @@ def kill_tree(pid):
     )
     with process_token(pid, wait_ms=3000) as token:
         if token is not None:
-            raise ToolError("STOP_FAILED", f"Process {pid} did not exit after taskkill.", 1,
+            raise ToolError("STOP_FAILED", f"行程 {pid} 在 taskkill 後仍未結束。", 1,
                             taskkillExitCode=run.returncode)
 
 
@@ -399,7 +399,7 @@ def restart(data, job_id):
             raise ToolError("JOB_NOT_ACTIVE", "只能重新建置執行中、排隊中、已停止或失敗的 Job。")
 
         if git_lock_path(data).exists():
-            raise ToolError("JOB_BUSY", "A Git operation is in progress. Retry after it finishes.", 1)
+            raise ToolError("JOB_BUSY", "Git 操作進行中，請等它完成後再試。", 1)
         limit(data)
         peers = [row for row in list_jobs(data) if row["id"] != job_id]
         recover_dead(data, peers)

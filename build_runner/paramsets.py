@@ -52,12 +52,12 @@ def validate_value(param, value):
     elif isinstance(value, str) and "\0" not in value:
         if kind == "value" or value in param["choices"]:
             return value
-    raise ToolError("INVALID_PARAM_VALUE", f"Invalid value for {param['flag']}.", key=key)
+    raise ToolError("INVALID_PARAM_VALUE", f"{param['flag']} 的值無效。", key=key)
 
 
 def values_for(params, values):
     if not isinstance(values, dict) or any(key not in params for key in values):
-        raise ToolError("INVALID_PARAMS", "Parameter values must use keys from the selected table.")
+        raise ToolError("INVALID_PARAMS", "參數值必須使用所選參數表中的項目。")
     return {key: validate_value(params[key], value) for key, value in values.items()}
 
 
@@ -123,7 +123,7 @@ def normalize(source):
 def load(data, name):
     source = read_json(named_file(data, "paramsets", name))
     if source is None:
-        raise ToolError("PARAMSET_NOT_FOUND", f"Parameter table not found: {name}")
+        raise ToolError("PARAMSET_NOT_FOUND", f"找不到參數表：{name}")
     return normalize(source)
 
 
@@ -133,7 +133,7 @@ def resolve(table, preset=None, overrides=None):
                 for key, param in params.items()}
     if preset is not None:
         if not isinstance(preset, str) or preset not in table["presets"]:
-            raise ToolError("PRESET_NOT_FOUND", "Preset not found in the selected parameter table.")
+            raise ToolError("PRESET_NOT_FOUND", "所選參數表中找不到這個預設組合。")
         defaults.update(table["presets"][preset])
     if overrides is not None:
         defaults.update(values_for(params, overrides))
@@ -141,7 +141,7 @@ def resolve(table, preset=None, overrides=None):
         selected = [key for key in group if defaults[key]]
         if len(selected) > 1:
             flags = " / ".join(params[key]["flag"] for key in selected)
-            raise ToolError("PARAM_CONFLICT", f"Conflicting parameters: {flags}", keys=selected)
+            raise ToolError("PARAM_CONFLICT", f"參數互相衝突：{flags}", keys=selected)
     argv = []
     for key, param in params.items():
         value = defaults[key]
