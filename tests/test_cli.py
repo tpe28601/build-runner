@@ -100,14 +100,16 @@ class BuildRunnerTests(unittest.TestCase):
         self.assertEqual(record["state"], "failed")
         self.assertEqual(record["rootError"], report["rootError"])
 
-    def test_stop_advances_queue_and_conflict_blocks_same_folder(self):
+    def test_stop_advances_queue_and_same_folder_queues_behind(self):
+        self.cli("concurrency", "3")
         first = self.start("PlatformA", "hold")
-        queued = self.start("PlatformB", "success")
-        conflict = self.cli("run", "--workspace", "PlatformA", "--recipe", "success", code=3)
-        self.assertEqual(conflict["error"]["code"], "WORKSPACE_CONFLICT")
-        self.assertEqual(self.cli("status", queued)["result"]["state"], "queued")
+        self.start("PlatformB", "success")
+        # Same folder no longer errors: the job lines up behind the running
+        # one even though the concurrency limit still has room.
+        behind = self.start("PlatformA", "success")
+        self.assertEqual(self.cli("status", behind)["result"]["state"], "queued")
         self.assertEqual(self.cli("stop", first)["result"]["state"], "stopped")
-        self.wait_for_success(queued)
+        self.wait_for_success(behind)
 
     def wait_for_success(self, job_id):
         deadline = time.monotonic() + 8

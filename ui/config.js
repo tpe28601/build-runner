@@ -196,10 +196,6 @@ $("build-preset").addEventListener("change", () => {
   renderParameterGroups();
   renderBuildPreview();
 });
-$("allow-conflict").addEventListener("change", () => {
-  buildChecked = "";
-  renderBuildPreview();
-});
 
 listen($("save-preset"), "click", async () => {
   const recipe = activeBuildRecipe();

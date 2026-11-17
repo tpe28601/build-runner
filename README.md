@@ -11,9 +11,9 @@
 
 ## 第一次建置
 
-1. 在 **Workspace** 新增資料夾，或選取 Git repo 後匯入 worktree。卡片上的「切換分支」支援直接輸入關鍵字搜尋，也接受 commit SHA（切到 detached HEAD）；切換成功後會詢問是否更新 Submodule。revert／rebase 等進行中會顯示紅色標章且 Git 會拒絕切換；必要時可勾「強制」用 `git checkout -f` 切換（丟棄未提交變更、取消進行中的操作，untracked 檔保留）。
+1. 在 **Workspace** 新增資料夾，或選取 Git repo 後匯入 worktree。卡片上的「切換分支」支援直接輸入關鍵字搜尋，也接受 commit SHA（切到 detached HEAD）；切換成功後會詢問是否更新 Submodule。revert／rebase 等進行中會顯示紅色標章且 Git 會拒絕切換；必要時可勾「強制」用 `git checkout -f` 切換（丟棄未提交變更、取消進行中的操作，untracked 檔保留）。同一 Workspace 的 Build Job 一律排隊：前一Job（任何類型）還沒結束時，新 Job 顯示「排隊中」並依序執行，不會互搶同一資料夾。
 2. 在 **流程設定 → Recipe** 查看內建 **Clean + Build**、**Clean + Build (-nou)** 或 **Clean + Build + Package**。打包範例會在清理與建置成功後套用 BIOS ROM 產出物規則。按 **複製為新 Recipe** 可調整 `builda.bat` 的工作子資料夾，並套用符合專案的產出物規則。
-3. 在 **Build** 選取 Workspace 和 Recipe。「Build 目標」可填 branch、remote branch 或 commit SHA，Runner 會在建置前切到該修訂並預設更新 Submodule（可選先 `git fetch origin`）；留空則建置目前位置。工作區有未提交變更時 checkout 會失敗，需要時可勾「強制切樹」（會先跳確認框，改走 `git switch -f`：丟棄未提交的追蹤檔案變更，untracked 檔保留；選遠端分支而本機已有同名分支時，未勾會明確報錯，勾了則把本機分支重置到遠端最新）。按「選擇 Branch／Commit…」可像 TortoiseGit 一樣用左側 heads／remotes 樹與 Filter 找分支，勾選多個 branch 與 commit（點分支列可看該分支的 commits）排成 Build 佇列，逐筆用 ↑↓ 調整順序或移除，送出後每個目標各建一個 Job、同一 Workspace 依序 checkout＋建置。目標相同的 Workspace 可輪流排隊建置，調度器會依序執行 checkout Job。檢查指令與資料夾衝突後開始建置。
+3. 在 **Build** 選取 Workspace 和 Recipe。「Build 目標」可填 branch、remote branch 或 commit SHA，Runner 會在建置前切到該修訂並預設更新 Submodule（可選先 `git fetch origin`）；留空則建置目前位置。工作區有未提交變更時 checkout 會失敗，需要時可勾「強制切樹」（會先跳確認框，改走 `git switch -f`：丟棄未提交的追蹤檔案變更，untracked 檔保留；選遠端分支而本機已有同名分支時，未勾會明確報錯，勾了則把本機分支重置到遠端最新）。按「選擇 Branch／Commit…」可像 TortoiseGit 一樣用左側 heads／remotes 樹與 Filter 找分支，勾選多個 branch 與 commit（點分支列可看該分支的 commits）排成 Build 佇列，逐筆用 ↑↓ 調整順序或移除，送出後每個目標各建一個 Job、同一 Workspace 依序 checkout＋建置。同一資料夾的 Job（不論有沒有 Build 目標）一律排隊依序執行，檢查指令與資料夾狀態後開始建置。
 4. 建置在背景執行。在 **Log** 查看即時輸出、搜尋警告或錯誤，遇到輸入提示時可送出 Enter。執行中可從 **總覽** 或 **Log** 停止或重新建置。重新建置會用原流程從第一步開始，並保留原 Job 的紀錄。
 
 ## 參數、產出物與排程

@@ -24,7 +24,7 @@ def parser():
     common.add_argument("--json", action="store_true", help="Print a TOOL-SPEC JSON response")
     common.add_argument("--data-dir", help="Override the user data directory")
     common.add_argument("--dry-run", action="store_true", help="Preview without writing")
-    common.add_argument("--yes", action="store_true", help="Confirm an overwrite or same-folder build")
+    common.add_argument("--yes", action="store_true", help="Confirm an overwrite")
     main = Parser(description=__doc__, parents=[common])
     main.add_argument("--version", action="store_true", help="Print the tool version")
     commands = main.add_subparsers(dest="command")
@@ -108,7 +108,7 @@ def execute(args):
         warnings = result.pop("warnings")
     elif command == "run":
         workspace = workspaces.get_workspace(data, args.workspace)
-        result, warnings = jobs.start(data, workspace, args.recipe, args.preset, force=args.yes, dry_run=args.dry_run)
+        result, warnings = jobs.start(data, workspace, args.recipe, args.preset, dry_run=args.dry_run)
         if args.wait and not args.dry_run:
             result = jobs.wait(data, result["id"])
         code = {"failed": 1, "stopped": 4}.get(result.get("state"), 0)

@@ -244,8 +244,10 @@ async function controlJob(row, action) {
     await syncJobs();
     if (restarting) {
       openLog(result.id);
-      const shared = (warnings || []).some((warning) => warning.code === "SHARED_GIT_DIR");
-      announce(shared ? "已建立重新建置的 Job（警告：有 Workspaces 共用同一 Git repo）。" : "已建立重新建置的 Job。");
+      const codes = new Set((warnings || []).map((warning) => warning.code));
+      const note = codes.has("SHARED_GIT_DIR") ? "（警告：有 Workspaces 共用同一 Git repo。）"
+        : codes.has("QUEUE_SAME_WORKSPACE") ? "（同一資料夾已有 Job，新的會排在後面依序執行。）" : "";
+      announce("已建立重新建置的 Job。" + note);
     } else {
       announce(result.state === "stopped" ? "已停止 Job。" : "Job 已結束。");
     }
@@ -668,7 +670,7 @@ async function loadRecipes() {
 }
 
 function buildInputs() {
-  const body = { workspaceIds: [...selected], recipe: $("recipe").value, confirm: $("allow-conflict").checked,
+  const body = { workspaceIds: [...selected], recipe: $("recipe").value,
     ...buildParameterPayload() };
   const opts = { submodule: $("build-submodule").checked, fetch: $("build-fetch").checked,
                  force: $("build-force").checked };
@@ -704,7 +706,7 @@ async function checkBuild(body) {
     }
     for (const warning of warnings) {
       const text = warning.code === "SHARED_GIT_DIR" ? "有 Workspaces 共用同一 Git repo。"
-        : warning.code === "QUEUE_SAME_WORKSPACE" ? "同一 Workspace 已有自帶 Checkout 的 Job，兩者會依序執行。"
+        : warning.code === "QUEUE_SAME_WORKSPACE" ? "同一 Workspace 已有 Job 在執行或排隊，新 Job 會自動排在後面依序執行。"
         : "有 Job 使用相同的資料夾。";
       $("preview").append(element("p", "preview-warning", text));
     }
@@ -713,7 +715,7 @@ async function checkBuild(body) {
   } catch (error) {
     buildChecked = "";
     $("preview-hint").textContent = "檢查未通過。";
-    const text = error.code === "WORKSPACE_CONFLICT" ? "同一資料夾已有執行中或排隊的 Job。" : error.message;
+    const text = error.message;
     const warning = element("p", "preview-warning", text);
     warning.dataset.error = "";
     $("preview").append(warning);
@@ -998,12 +1000,11 @@ listen($("build-form"), "submit", async () => {
   const body = buildInputs();
   if (JSON.stringify(body) !== buildChecked) {
     const warnings = await checkBuild(body);
-    // QUEUE_SAME_WORKSPACE just means the new checkout job lines up behind
-    // another one; that is the point of the feature, so it never blocks submit.
+    // QUEUE_SAME_WORKSPACE just means the new job lines up behind the active
+    // ones on the same folder; that is the point of the queue, so never block.
     if (warnings.some((warning) => warning.code !== "QUEUE_SAME_WORKSPACE")) return;
   }
   const { result } = await api("/jobs", "POST", body);
-  $("allow-conflict").checked = false;
   $("build-target").value = "";
   $("build-fetch").checked = false;
   $("build-force").checked = false;

@@ -491,6 +491,60 @@ class WebTests(unittest.TestCase):
         finally:
             self.api("POST", "/api/settings", {"maxConcurrentJobs": limit_before})
 
+    @unittest.skipUnless(os.name == "nt", "Uses Windows batch files")
+    def test_same_workspace_plain_build_queues_behind(self):
+        ws = self.root / "Plain queue ws"
+        sample = ws / "build-sample"
+        sample.mkdir(parents=True)
+        shutil.copyfile(ROOT / "tests" / "fake_build.bat", sample / "fake build.bat")
+        row = self.api("POST", "/api/workspaces", {"name": ws.name, "path": str(ws)}, code=201)["result"]
+        self.api("POST", "/api/recipes", {"name": "Plain gate",
+                                          "env": {"BUILD_RUNNER_TEST_PYTHON": sys.executable},
+                                          "steps": [{"cwd": "build-sample", "argv": ["fake build.bat", "gate"]}]},
+                 code=201)
+        self.api("POST", "/api/recipes", {"name": "Plain quick",
+                                          "steps": [{"cwd": "build-sample", "argv": ["fake build.bat", "success"]}]},
+                 code=201)
+
+        def final(job_id):
+            deadline = time.monotonic() + 90
+            while time.monotonic() < deadline:
+                done = self.api("GET", "/api/jobs/" + job_id)["result"]
+                if done["state"] not in ("queued", "running"):
+                    return done
+                time.sleep(0.15)
+            self.fail("job did not finish: " + job_id)
+
+        # A generous limit proves the folder itself, not the limit, serializes.
+        limit_before = self.api("GET", "/api/settings")["result"]["maxConcurrentJobs"]
+        self.api("POST", "/api/settings", {"maxConcurrentJobs": 3})
+        try:
+            gate = self.api("POST", "/api/jobs", {"workspaceIds": [row["id"]], "recipe": "Plain gate"},
+                            code=201)["result"][0]
+            deadline = time.monotonic() + 60
+            while not (sample / "ready.txt").exists() and time.monotonic() < deadline:
+                time.sleep(0.1)
+            self.assertTrue((sample / "ready.txt").exists(), "gate step did not start")
+
+            # A plain build (no checkout) on the busy folder is now accepted as
+            # a queue entry: check and create both only warn about the queue.
+            check = self.api("POST", "/api/jobs/check", {"workspaceIds": [row["id"]], "recipe": "Plain quick"})
+            self.assertIn("QUEUE_SAME_WORKSPACE", [w.get("code") for w in check.get("warnings") or []])
+            created = self.api("POST", "/api/jobs", {"workspaceIds": [row["id"]], "recipe": "Plain quick"},
+                               code=201)
+            quick = created["result"][0]
+            self.assertIn("QUEUE_SAME_WORKSPACE", [w.get("code") for w in created.get("warnings") or []])
+            time.sleep(0.8)
+            self.assertEqual(self.api("GET", "/api/jobs/" + quick["id"])["result"]["state"], "queued")
+            (sample / "release.txt").touch()
+            gate_done = final(gate["id"])
+            quick_done = final(quick["id"])
+            self.assertEqual(gate_done["state"], "success", gate_done)
+            self.assertEqual(quick_done["state"], "success", quick_done)
+            self.assertGreaterEqual(quick_done["startedAt"], gate_done["endedAt"])
+        finally:
+            self.api("POST", "/api/settings", {"maxConcurrentJobs": limit_before})
+
     @unittest.skipUnless(os.name == "nt" and shutil.which("git"), "Uses Git for Windows and batch files")
     def test_build_checkout_multi_target_queue(self):
         ws = self.root / "Queue build ws"

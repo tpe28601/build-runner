@@ -190,22 +190,18 @@ def request_enter(data, job_id):
     (job_dir(data, job_id) / "enter.request").write_text(now(), encoding="utf-8")
 
 
-def check_conflicts(data, path, common, force=False, *, rows=None, checkout=None):
+def check_conflicts(data, path, common, *, rows=None):
     warnings = []
     key = workspaces.path_key(path)
     for row in list_jobs(data) if rows is None else rows:
         if row["state"] not in ACTIVE:
             continue
         if workspaces.path_key(row["workspacePath"]) == key:
-            if checkout and row.get("checkoutTarget"):
-                # Both jobs carry their own checkout target, and dispatch runs
-                # same-repo checkout jobs one at a time: queueing is safe.
-                warnings.append({"code": "QUEUE_SAME_WORKSPACE", "message": "Same workspace; jobs run serially.",
-                                 "jobId": row["id"]})
-            elif not force:
-                raise ToolError("WORKSPACE_CONFLICT", "同一資料夾已有執行中或排隊的 Job。", jobId=row["id"])
-            else:
-                warnings.append({"code": "WORKSPACE_CONFLICT", "message": "Same workspace folder.", "jobId": row["id"]})
+            # Same folder: builds never overlap. The dispatcher runs same-folder
+            # jobs one at a time in queue order, so this job simply lines up
+            # behind the active ones instead of being rejected.
+            warnings.append({"code": "QUEUE_SAME_WORKSPACE", "message": "Same workspace; runs after the current jobs.",
+                             "jobId": row["id"]})
         elif common and row.get("gitCommonDir") == common:
             warnings.append({"code": "SHARED_GIT_DIR", "message": "Workspaces share a Git repository.", "jobId": row["id"]})
     return warnings
@@ -235,8 +231,8 @@ def job_plan(workspace, recipe, recipe_name, preset, table, overrides, artifact_
     return preview, plan
 
 
-def start(data, workspace, recipe_name, preset=None, *, force=False, dry_run=False):
-    rows, warnings = start_many(data, [workspace], recipe_name, preset, force=force, dry_run=dry_run)
+def start(data, workspace, recipe_name, preset=None, *, dry_run=False):
+    rows, warnings = start_many(data, [workspace], recipe_name, preset, dry_run=dry_run)
     return rows[0], warnings
 
 
@@ -254,7 +250,7 @@ def create_queued_job(data, preview, plan, *, pending=False, queued_at=None):
     return row
 
 
-def start_many(data, workspace_rows, recipe_name, preset=None, *, force=False, dry_run=False, overrides=None,
+def start_many(data, workspace_rows, recipe_name, preset=None, *, dry_run=False, overrides=None,
                restrict_values=False, checkouts=None):
     recipe = recipes.get_recipe(data, recipe_name)
     uses_params = any(isinstance(step, dict) and step.get("enabled") is not False and step.get("useParams")
@@ -286,8 +282,7 @@ def start_many(data, workspace_rows, recipe_name, preset=None, *, force=False, d
             raise ToolError("JOB_BUSY", "Git 操作進行中，請等它完成後再試。", 1)
         warnings = []
         for preview, plan in plans:
-            for warning in check_conflicts(data, preview["workspacePath"], preview["gitCommonDir"], force,
-                                           rows=rows, checkout=plan.get("checkout")):
+            for warning in check_conflicts(data, preview["workspacePath"], preview["gitCommonDir"], rows=rows):
                 # A 30-target batch pairs every plan with every earlier job, so
                 # the same (code, jobId) would repeat 30 times: report each pair
                 # once to keep the preview readable.
@@ -334,12 +329,15 @@ def dispatch(data, *, breakaway=False):
             break
         if row["state"] != "queued":
             continue
-        if row.get("checkoutTarget") and any(
-                workspaces.path_key(active["workspacePath"]) == workspaces.path_key(row["workspacePath"]) or
-                (row.get("gitCommonDir") and active.get("gitCommonDir") == row["gitCommonDir"])
-                for active in running_rows):
-            # A checkout job rewrites the working tree: never overlap another
-            # job on the same workspace or repo, even under a higher limit.
+        if any(workspaces.path_key(active["workspacePath"]) == workspaces.path_key(row["workspacePath"])
+               for active in running_rows):
+            # Same folder: one build at a time, in queue order, even when the
+            # concurrency limit would allow more.
+            continue
+        if row.get("checkoutTarget") and row.get("gitCommonDir") and any(
+                active.get("gitCommonDir") == row["gitCommonDir"] for active in running_rows):
+            # A checkout rewrites the working tree: also never overlap a job
+            # running in another worktree of the same repo.
             continue
         try:
             child = subprocess.Popen(
@@ -453,11 +451,10 @@ def restart(data, job_id):
             # common path lock-free.
             git = workspaces.git_state(original["workspacePath"], include_dirty=False)
         git_common = git["gitCommonDir"] if git else original.get("gitCommonDir")
-        # A restart re-runs the saved plan, checkout target included; the conflict
-        # check and the dispatch serialiser must both see it as a checkout job.
+        # A restart re-runs the saved plan, checkout target included; the
+        # dispatch serialiser must see the replacement as a checkout job.
         plan = read_json(job_dir(data, replacement_id or job_id) / "plan.json")
-        checkout = plan.get("checkout") if isinstance(plan, dict) else None
-        warnings = check_conflicts(data, original["workspacePath"], git_common, rows=peers, checkout=checkout)
+        warnings = check_conflicts(data, original["workspacePath"], git_common, rows=peers)
 
         if not replacement_id:
             if not isinstance(plan, dict) or not plan.get("steps"):

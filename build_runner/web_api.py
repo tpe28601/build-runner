@@ -80,7 +80,7 @@ def tool_error(exc):
     status = 400
     if exc.code.endswith("_NOT_FOUND"):
         status = 404
-    elif exc.code in ("JOB_BUSY", "JOB_NOT_ACTIVE", "WORKSPACE_CONFLICT", "WORKSPACE_EXISTS"):
+    elif exc.code in ("JOB_BUSY", "JOB_NOT_ACTIVE", "WORKSPACE_EXISTS"):
         status = 409
     elif exc.exit_code in (1, 5):
         status = 500
@@ -747,7 +747,7 @@ class Api:
             if any(not spec for spec in specs):
                 raise HttpError(400, "INVALID_CHECKOUT", "checkouts 每一筆都要有非空的 target。")
         result, warnings = jobs.start_many(self.data, rows, name, preset,
-                                           force=body.get("confirm") is True, dry_run=preview,
+                                           dry_run=preview,
                                            overrides=body.get("params"), checkouts=specs or None)
         return ok(result, 200 if preview else 201, warnings=warnings)
 

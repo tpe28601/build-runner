@@ -91,10 +91,10 @@ Dev-Toolbox 第四個工具：管理多個程式碼資料夾、用可自訂的�
 ### 3.4 Job（多個同時跑）
 
 - 從「Workspace × Recipe」建立 Job，可一次勾多個 Workspace。
-- 可同時跑多個 Job；「同時最多幾個」由使用者在設定或總覽頁隨時調整（預設 2，填 0 代表不限），超過就排隊。調高後立刻從排隊中啟動，調低不影響已在跑的 Job。可隨時新增、取消排隊、停止。帶 Build 目標的 Job 另有硬性序列化：只要已有相同 Workspace／相同 repo 的 Job 在跑就不啟動（即使上限還有空位）。
+- 可同時跑多個 Job；「同時最多幾個」由使用者在設定或總覽頁隨時調整（預設 2，填 0 代表不限），超過就排隊。調高後立刻從排隊中啟動，調低不影響已在跑的 Job。可隨時新增、取消排隊、停止。另有硬性序列化（不受上限影響）：任何 Job 與執行中 Job 相同 Workspace 資料夾 → 不啟動，依 queuedAt 順序輪流跑；帶 Build 目標的 Job 亦與相同 repo（gitCommonDir，含其他 worktree）的執行中 Job 序列化，避免切樹互搶。
 - **Build 目標（checkout）**：`POST /api/jobs` 可帶 `checkout: { target, fetch, submodule, force }`（target ≤200 字元；submodule 預設 true），或 `checkouts: [同上] × 1..30` 的多目標佇列（陣列順序＝建置順序，每目標×每 Workspace 各建一個 Job，queuedAt 以 1ms 遞增保證 dispatch 依序）。Runner 在第一個建置步驟前依序執行：選配 `git fetch origin --prune` → `workspaces.resolve_checkout()` 解析目標（branch／remote／SHA）→ `git switch`（SHA 走 `--detach`）→ 選配 `git submodule update --init --recursive`，log 以 `[Build Runner]` 標注進度，status 的 `step` 顯示 `Checkout`。`force: true` 時 switch 加 `-f`（三路徑 --detach／--／--track 皆適用）：丟棄未提交的追蹤檔案變更（untracked 保留）；UI 的「強制切樹」勾選需經確認框，取消自動反勾。目標為遠端分支時：本機已有同名分支且未勾 force → Job 以 `CHECKOUT_BRANCH_EXISTS` 失敗（避免建置到可能落後的本機分支）；勾 force → `git switch -C -f <name> --track -- <remote>/<name>` 重置本機分支到遠端最新。未勾 force 時髒樹或找不到目標会让 Job 在 Checkout 步驟直接失敗，不會建置到錯誤修訂。preview 的每個 plan 帶 `checkoutTarget`。Build 頁「選擇 Branch／Commit…」仿 TortoiseGit 選 log 對話框：左側多層樹（依分支名 `/` 逐層分組，含葉分支；heads／remotes／各 remote 預設展開，單節點最多渲染 200 項）、右側 Branch 表格（名稱、Last Commit／Author Date、Last Commit，資料來自 `GET /api/workspaces/<id>/branches`），Filter 欄同步縮減樹與表格；點分支列切換下方 `GET /api/workspaces/<id>/commits` 的 commit 清單；勾選 branch（完整 ref）／commit 加入 Build 佇列、逐筆 ↑↓ 排序或移除後一次送出 `checkouts`；手動編輯「Build 目標」欄會先確認再清掉佇列，改走單筆 `checkout`。
 - **衝突警告**：
-  - 同一個資料夾已有 Job 在跑或排隊 → 紅色警告，預設不允許（要勾「我知道」才放行）。例外：新 Job 與既有 ACTIVE Job **都**自帶 Build 目標時改回黃色 `QUEUE_SAME_WORKSPACE`（201 放行，dispatch 保證序列化執行）。
+  - 同一個資料夾已有 Job 在跑或排隊 → 黃色 `QUEUE_SAME_WORKSPACE` 警告（201 放行）：Job 直接排在後面，dispatch 保證同一資料夾一次只跑一個、依 queuedAt 順序執行，與併發上限和是否帶 Build 目標無關。
   - 不同 worktree 但同一個 repo（`git rev-parse --git-common-dir` 相同）→ 黃色提醒。
 - 停止：用 `taskkill /PID <pid> /T /F` 結束整個行程樹。
 - **架構**：每個 Job 由獨立的 runner 子行程執行（`python -m build_runner.runner <jobId>`），狀態寫在 `jobs\<jobId>\status.json`、輸出寫在 `jobs\<jobId>\build.log`。Web、CLI、MCP 都讀同一份檔案，所以關掉網頁不會中斷 build，三種介面看到的也一致。
@@ -216,7 +216,7 @@ exit code 照 TOOL-SPEC（0 成功、1 失敗、3 參數錯、4 取消、5 環�
 | `GET/POST/DELETE /api/recipes` | Recipe |
 | `GET/POST/DELETE /api/artifact-rules`、`POST /api/artifact-rules/preview` | 產出物規則（GET 第一筆為唯讀內建 `@builtin:bios-rom-package`） |
 | `GET /api/packs/inventory`、`POST /api/packs/export`、`POST /api/packs/preview`、`POST /api/packs/import` | 設定包：列出可匯出項目、匯出（回傳 JSON 內容與檔名）、預覽匯入計畫（`decisions` 為 `{ "<section>:<名稱>": "overwrite|rename|skip" }`）、寫入（需 `confirm: true`，覆蓋前備份到 `backups\`） |
-| `POST /api/jobs/check` | 建立前檢查衝突，回傳警告清單（帶 checkout 目標時同資料夾改回 `QUEUE_SAME_WORKSPACE` 黃色警告） |
+| `POST /api/jobs/check` | 建立前檢查，回傳警告清單（同資料夾已有 ACTIVE Job → `QUEUE_SAME_WORKSPACE`：會排隊依序執行，不拒絕） |
 | `POST /api/jobs` | 建立 Job（可多個 Workspace）；選填 `checkout: { target, fetch, submodule, force }` 或 `checkouts: [...] × 1..30`（多目標佇列，陣列順序＝建置順序），Runner 建置前先切到該 branch／SHA 並更新 submodule（force 時 `git switch -f` 丟棄未提交變更），preview 每筆 plan 含 `checkoutTarget` |
 | `GET /api/jobs`、`GET /api/jobs/<id>` | 列表／狀態 |
 | `GET /api/jobs/<id>/log?from=<offset>` | 增量 log；`?download=1` 下載 `.log` 檔 |
