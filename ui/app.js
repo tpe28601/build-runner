@@ -670,13 +670,14 @@ async function loadRecipes() {
 function buildInputs() {
   const body = { workspaceIds: [...selected], recipe: $("recipe").value, confirm: $("allow-conflict").checked,
     ...buildParameterPayload() };
+  const opts = { submodule: $("build-submodule").checked, fetch: $("build-fetch").checked,
+                 force: $("build-force").checked };
   if (buildQueue.length) {
     // Ordered multi-target queue: array order is the build order per workspace.
-    body.checkouts = buildQueue.map((item) => ({ target: item.target, submodule: $("build-submodule").checked,
-                                                 fetch: $("build-fetch").checked }));
+    body.checkouts = buildQueue.map((item) => ({ target: item.target, ...opts }));
   } else {
     const target = $("build-target").value.trim();
-    if (target) body.checkout = { target, submodule: $("build-submodule").checked, fetch: $("build-fetch").checked };
+    if (target) body.checkout = { target, ...opts };
   }
   if (!body.workspaceIds.length || !body.recipe) throw new Error("請選擇 Workspace 與 Recipe。");
   return body;
@@ -696,7 +697,8 @@ async function checkBuild(body) {
       $("preview").append(element("strong", "", plan.workspace));
       if (plan.checkoutTarget) {
         $("preview").append(element("p", "tb-muted", "Build 前會先 Checkout 到：" + plan.checkoutTarget +
-          (checkout && checkout.submodule ? "（並更新 Submodule）" : "")));
+          (checkout && checkout.submodule ? "（並更新 Submodule）" : "") +
+          (checkout && checkout.force ? "（強制：未提交變更將被丟棄）" : "")));
       }
       for (const argv of plan.argvPreview) $("preview").append(element("pre", "preview-command", JSON.stringify(argv)));
     }
@@ -971,6 +973,16 @@ listen($("build-pick"), "click", async () => {
 listen($("commit-filter"), "input", () => { renderTree(); renderBranchTable(); });
 listen($("commit-pick-clear"), "click", () => { buildQueue = []; renderQueues(); });
 listen($("commit-pick-close"), "click", () => $("commit-pick").close());
+// 勾「強制切樹」前必須確認：git switch -f 會丟棄未提交的追蹤檔案變更。
+listen($("build-force"), "change", () => {
+  if ($("build-force").checked && !window.confirm(
+      "強制切樹會以 git switch -f 切換，工作區中「未提交的追蹤檔案變更」將被丟棄且無法復原"
+    + "（untracked 檔案保留）。\n"
+    + "若選的是遠端分支且本機已有同名分支，本機分支會被重置到遠端最新（多出的本機 commit 可經 reflog 找回）。\n\n"
+    + "確定允許 Runner 在建置前強制切換？")) {
+    $("build-force").checked = false;
+  }
+});
 // 手動修改 Build 目標代表改走單筆模式；確認後才清佇列，避免誤觸輸入就把排好的目標全丟。
 listen($("build-target"), "beforeinput", () => { targetOld = $("build-target").value; });
 listen($("build-target"), "input", () => {
@@ -994,6 +1006,7 @@ listen($("build-form"), "submit", async () => {
   $("allow-conflict").checked = false;
   $("build-target").value = "";
   $("build-fetch").checked = false;
+  $("build-force").checked = false;
   buildQueue = [];
   renderQueues();
   buildChecked = "";

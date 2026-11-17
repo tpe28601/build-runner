@@ -5,6 +5,7 @@
 ### 新功能
 
 - **建置前 Checkout**：Build 頁可填「Build 目標」（branch、remote branch 或 commit SHA），Runner 會先切到該修訂再建置，預設一併執行 `git submodule update --init --recursive`（可取消勾選），並可選擇先 `git fetch origin --prune`。留空則直接在目前位置建置。目標找不到或工作區為髒樹時，Job 在 Checkout 步驟失敗，不會建置到錯誤的修訂。
+- **強制切樹（選配）**：Build 頁新增「強制切樹」勾選，勾選時先跳確認框（取消即反勾）；確認後 Runner 改用 `git switch -f` 切換，工作區未提交的追蹤檔案變更會被丟棄（untracked 檔案保留）。適用於髒樹也要照指定修訂建置的情境；Build 預覽會標註「強制：未提交變更將被丟棄」。選「遠端分支」且本機已有同名分支時：未勾強制會以清楚的中文訊息失敗（不靜默沿用可能落後的本機分支），勾了強制則以 `git switch -C -f` 把本機分支重置到遠端最新（本機多出的 commit 可經 reflog 找回）。
 - **同 Workspace 排隊建置**：兩個 Job 都自帶 Build 目標時，同一資料夾（或同一 Git repo）不再視為衝突，可排隊；調度器會依序一次執行一個 checkout Job，避免互搶工作區。
 - Workspace 卡的切換框與 Build 目標採同一套解析規則：完整 ref、顯示名稱（如 `main`、`origin/main`）與 commit SHA（4–40 位十六進位）皆可，local 與 remote 同名時以 local 優先。
 - Build 預覽、Job 卡片與建置 log 會顯示 checkout 目標與執行進度。

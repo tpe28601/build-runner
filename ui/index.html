@@ -103,6 +103,7 @@
             <ol id="build-queue" class="commit-queue" hidden></ol>
             <label class="check"><input type="checkbox" id="build-submodule" checked><span>Checkout 後更新 Submodule（git submodule update --init --recursive）。</span></label>
             <label class="check"><input type="checkbox" id="build-fetch"><span>先 fetch origin（目標只存在遠端時用；大 repo 較久）。</span></label>
+            <label class="check"><input type="checkbox" id="build-force"><span>強制切樹（git switch -f：丟棄工作區未提交的追蹤檔案變更；遠端分支已有同名本機分支時重置它到遠端最新；勾選會先確認）。</span></label>
             <fieldset id="build-parameters" class="stack" hidden>
               <legend>3. 選擇參數</legend>
               <div class="editor-fields">

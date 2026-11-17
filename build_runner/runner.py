@@ -213,14 +213,39 @@ def run_checkout(path, spec, log):
                              f"本機找不到「{target}」；請確認 branch 或 commit SHA（或改用「先 fetch origin」）。")
     kind, value = resolved
     checkout_note(log, f"Checkout {target} → {'commit ' + value[:12] if kind == 'sha' else value}")
+    # git switch -f: drop conflicting uncommitted tracked changes (untracked
+    # files survive). Only used when the job's checkout spec carries force,
+    # which the UI gates behind an explicit confirm dialog.
+    force = bool(spec.get("force"))
+    if force:
+        checkout_note(log, "強制切樹（-f）：未提交的追蹤檔案變更將被丟棄（untracked 檔保留）。")
     if kind == "sha":
-        workspaces.git(path, "switch", "--detach", value, required=True, timeout=600)
+        workspaces.git(path, "switch", *(("-f",) if force else ()), "--detach", value, required=True, timeout=600)
     elif value.startswith("refs/heads/"):
-        workspaces.git(path, "switch", "--", value.removeprefix("refs/heads/"), required=True, timeout=600)
-    else:
-        # A pre-existing local branch for this remote switches to it directly.
-        workspaces.git(path, "switch", "--track", "--", value.removeprefix("refs/remotes/"),
+        workspaces.git(path, "switch", *(("-f",) if force else ()), "--", value.removeprefix("refs/heads/"),
                        required=True, timeout=600)
+    else:
+        # Remote branch: make a local branch of the same name track it. Plain
+        # --track dies with "a branch named ... already exists" when that local
+        # branch is there, so decide up front: without force stop with clear
+        # guidance (the local branch may differ from the remote tip); with
+        # force reset it onto the remote tip (-C), discarding conflicts (-f).
+        remote_ref = value.removeprefix("refs/remotes/")
+        if "/" not in remote_ref:  # malformed refs/remotes/<no-remote> ref
+            raise jobs.ToolError("CHECKOUT_TARGET_NOT_FOUND",
+                                 f"遠端分支「{remote_ref}」格式異常，無法解析 remote 名稱。")
+        local_name = remote_ref.split("/", 1)[1]        # remote names contain no "/"
+        if force:
+            checkout_note(log, f"強制（-C -f）：本機 branch「{local_name}」若已存在，將重置到遠端最新。")
+            workspaces.git(path, "switch", "-C", local_name, "-f", "--track", "--",
+                           remote_ref, required=True, timeout=600)
+        elif workspaces.git(path, "show-ref", "--verify", "--quiet", "refs/heads/" + local_name) is not None:
+            raise jobs.ToolError(
+                "CHECKOUT_BRANCH_EXISTS",
+                f"本機已存在 branch「{local_name}」，內容可能與遠端不同，Job 不覆寫它。"
+                "請改選本機分支，或勾「強制切樹」以遠端最新版本重置本機 branch（本機多出的 commit 可經 reflog 找回）。")
+        else:
+            workspaces.git(path, "switch", "--track", "--", remote_ref, required=True, timeout=600)
     if spec.get("submodule"):
         checkout_note(log, "git submodule update --init --recursive …")
         workspaces.git(path, "submodule", "update", "--init", "--recursive", required=True, timeout=1800)
@@ -249,7 +274,7 @@ def run(data, job_id):
         if checkout.get("target"):
             # Build the requested revision, not wherever the tree happens to be.
             # A dirty worktree or missing target fails the job here, before any
-            # build step runs; there is no force path on purpose.
+            # build step runs, unless the spec opted into force (-f).
             row["step"] = "Checkout"
             with jobs.lock(data):
                 jobs.save(data, row)

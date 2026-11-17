@@ -72,7 +72,8 @@ def checkout_spec(raw):
         raise HttpError(400, "INVALID_CHECKOUT", "Build 目標長度超過 200 字元。")
     if not target:
         return None
-    return {"target": target, "fetch": bool(raw.get("fetch")), "submodule": bool(raw.get("submodule", True))}
+    return {"target": target, "fetch": bool(raw.get("fetch")), "submodule": bool(raw.get("submodule", True)),
+            "force": bool(raw.get("force"))}
 
 
 def tool_error(exc):

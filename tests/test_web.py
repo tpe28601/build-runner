@@ -564,16 +564,76 @@ class WebTests(unittest.TestCase):
                                        "checkouts": [{"target": " "}]}, code=400)
         self.assertEqual(len(self.api("GET", "/api/jobs")["result"]), jobs_before)
 
+        # A dirty worktree blocks the checkout step; only force (-f) gets through.
+        (ws / "extra.txt").write_text("dirty")
+        blocked = self.api("POST", "/api/jobs", {"workspaceIds": [row["id"]], "recipe": "Queue quick",
+                                                 "checkout": {"target": "second"}}, code=201)["result"][0]
+        blocked_done = final(blocked["id"])
+        self.assertEqual(blocked_done["state"], "failed", blocked_done)
+        # The failure must come from Checkout, not from the build step: the log
+        # carries the checkout note but never reaches the runner's done marker.
+        blocked_log = self.api("GET", "/api/jobs/" + blocked["id"] + "/log?from=0")["result"]["text"]
+        self.assertIn("Checkout second", blocked_log)
+        self.assertNotIn("- Done -", blocked_log)
+        self.assertEqual(repo_git("branch", "--show-current"), "main")
+        forced = self.api("POST", "/api/jobs", {"workspaceIds": [row["id"]], "recipe": "Queue quick",
+                                                "checkout": {"target": "second", "force": True}}, code=201)["result"][0]
+        forced_done = final(forced["id"])
+        self.assertEqual(forced_done["state"], "success", forced_done)
+        self.assertEqual(forced_done["branch"], "second")
+        self.assertEqual(repo_git("status", "--porcelain"), "")
+
+        # A remote branch whose local counterpart exists is not silently reused
+        # or overwritten: without force the job fails with guidance; with force
+        # the local branch is reset onto the remote tip (git switch -C -f).
+        bare = self.root / "Queue origin.git"
+        subprocess.run(["git", "init", "--bare", "-b", "main", str(bare)], capture_output=True, timeout=15, check=True)
+        repo_git("remote", "add", "origin", str(bare))
+        repo_git("push", "-q", "origin", "second")
+        (ws / "extra.txt").write_text("local ahead")
+        repo_git(*identity, "add", "-A")
+        repo_git(*identity, "commit", "-qm", "local only")
+        repo_git("switch", "-q", "main")
+        self.assertNotEqual(repo_git("rev-parse", "second"), repo_git("rev-parse", "origin/second"))
+        conflict = self.api("POST", "/api/jobs", {"workspaceIds": [row["id"]], "recipe": "Queue quick",
+                                                  "checkout": {"target": "refs/remotes/origin/second"}},
+                            code=201)["result"][0]
+        conflict_done = final(conflict["id"])
+        self.assertEqual(conflict_done["state"], "failed", conflict_done)
+        # The guidance message is ours (raised before git runs), not git's fatal.
+        self.assertIn("強制切樹", conflict_done["message"] or "")
+        self.assertEqual(repo_git("branch", "--show-current"), "main")
+        self.assertNotEqual(repo_git("rev-parse", "second"), repo_git("rev-parse", "origin/second"))
+        reset = self.api("POST", "/api/jobs", {"workspaceIds": [row["id"]], "recipe": "Queue quick",
+                                               "checkout": {"target": "refs/remotes/origin/second",
+                                                            "force": True}}, code=201)["result"][0]
+        reset_done = final(reset["id"])
+        self.assertEqual(reset_done["state"], "success", reset_done)
+        self.assertEqual(reset_done["branch"], "second")
+        self.assertEqual(repo_git("rev-parse", "second"), repo_git("rev-parse", "origin/second"))
+
+        # The same force job must also succeed while HEAD already sits on the
+        # local branch: git switch -C resets the checked-out branch in place.
+        again = self.api("POST", "/api/jobs", {"workspaceIds": [row["id"]], "recipe": "Queue quick",
+                                               "checkout": {"target": "refs/remotes/origin/second",
+                                                            "force": True}}, code=201)["result"][0]
+        again_done = final(again["id"])
+        self.assertEqual(again_done["state"], "success", again_done)
+        self.assertEqual(again_done["branch"], "second")
+
         # Restarting a failed checkout job keeps its checkout target so the
-        # retry checks out the same revision instead of building in place.
+        # retry checks out the same revision instead of building in place; the
+        # plan is copied whole, so the force flag survives a restart too.
         ghost = self.api("POST", "/api/jobs", {"workspaceIds": [row["id"]], "recipe": "Queue quick",
-                                               "checkout": {"target": "ghost-target"}}, code=201)["result"][0]
+                                               "checkout": {"target": "ghost-target", "force": True}},
+                         code=201)["result"][0]
         self.assertEqual(final(ghost["id"])["state"], "failed")
         replacement = self.api("POST", "/api/jobs/" + ghost["id"] + "/restart", {"confirm": True}, code=201)["result"]
         self.assertEqual(replacement["checkoutTarget"], "ghost-target")
         self.assertEqual(replacement["recipe"], "Queue quick")
+        plan = json.loads((self.data / "jobs" / replacement["id"] / "plan.json").read_text(encoding="utf-8"))
+        self.assertTrue(plan["checkout"]["force"])
         self.assertEqual(final(replacement["id"])["state"], "failed")
-        self.assertIn("ghost-target", replacement["checkoutTarget"])
 
     @unittest.skipUnless(os.name == "nt", "Uses Windows batch files")
     def test_multi_workspace_validation_precedes_queueing(self):
