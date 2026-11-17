@@ -193,6 +193,40 @@ class EnterForwarder:
             pass
 
 
+def checkout_note(log, text):
+    log.write(f"[Build Runner] {text}\n".encode("utf-8", "replace"))
+
+
+def run_checkout(path, spec, log):
+    """Prepare the build revision: fetch, checkout the target, refresh submodules.
+
+    Raises jobs.ToolError on any failure; run() then ends the job with the
+    message instead of building the wrong revision.
+    """
+    target = spec["target"]
+    if spec.get("fetch"):
+        checkout_note(log, "Git fetch origin --prune …")
+        workspaces.git(path, "fetch", "origin", "--prune", required=True, timeout=3600)
+    resolved = workspaces.resolve_checkout(path, target)
+    if not resolved:
+        raise jobs.ToolError("CHECKOUT_TARGET_NOT_FOUND",
+                             f"本機找不到「{target}」；請確認 branch 或 commit SHA（或改用「先 fetch origin」）。")
+    kind, value = resolved
+    checkout_note(log, f"Checkout {target} → {'commit ' + value[:12] if kind == 'sha' else value}")
+    if kind == "sha":
+        workspaces.git(path, "switch", "--detach", value, required=True, timeout=600)
+    elif value.startswith("refs/heads/"):
+        workspaces.git(path, "switch", "--", value.removeprefix("refs/heads/"), required=True, timeout=600)
+    else:
+        # A pre-existing local branch for this remote switches to it directly.
+        workspaces.git(path, "switch", "--track", "--", value.removeprefix("refs/remotes/"),
+                       required=True, timeout=600)
+    if spec.get("submodule"):
+        checkout_note(log, "git submodule update --init --recursive …")
+        workspaces.git(path, "submodule", "update", "--init", "--recursive", required=True, timeout=1800)
+    checkout_note(log, "Checkout 完成，開始執行建置步驟。")
+
+
 def run(data, job_id):
     folder = jobs.job_dir(data, job_id)
     log_path = folder / "build.log"
@@ -211,6 +245,19 @@ def run(data, job_id):
     try:
         contain_process_tree()
         contained = True
+        checkout = plan.get("checkout") or {}
+        if checkout.get("target"):
+            # Build the requested revision, not wherever the tree happens to be.
+            # A dirty worktree or missing target fails the job here, before any
+            # build step runs; there is no force path on purpose.
+            row["step"] = "Checkout"
+            with jobs.lock(data):
+                jobs.save(data, row)
+            with log_path.open("ab", buffering=0) as log:
+                run_checkout(plan["workspacePath"], checkout, log)
+            # Fetch/switch/submodule have their own per-command timeouts; that
+            # prep time must not eat into the build steps' shared deadline.
+            deadline = time.monotonic() + plan["timeoutSec"]
         git = workspaces.git_state(plan["workspacePath"], include_dirty=False)
         row.update(branch=git["branch"], commit=git["commit"])
         # Give the step an attachable console for raw-key prompts without showing a window.

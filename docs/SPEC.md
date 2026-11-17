@@ -37,7 +37,7 @@ Dev-Toolbox 第四個工具：管理多個程式碼資料夾、用可自訂的�
 - 新增：選資料夾（輸入路徑，或後端用 `tkinter.filedialog` 開選擇視窗；tkinter 不能用時退回手動輸入）。
 - 從 git repo 匯入：輸入 repo 路徑，用 `git worktree list --porcelain` 列出所有 worktree，勾選後加入。
 - 每個 Workspace 顯示：名稱（可改）、路徑、branch、HEAD commit（短 hash＋標題）、是否有未提交變更、上次 build 結果。
-- 可做的 git 動作（都用參數陣列呼叫 git）：重新整理狀態、`git pull`（ff-only）、切 branch（local／remote 可搜尋，勾「強制」改走 `git checkout -f`：丟棄未提交變更並取消進行中的 revert/cherry-pick/merge）、`git submodule update --init --recursive`。revert/rebase 等進行中會在卡片顯示 `gitOperation` 標章，此時 Git 拒絕一般切換。
+- 可做的 git 動作（都用參數陣列呼叫 git）：重新整理狀態、`git pull`（ff-only）、切 branch（local／remote 可搜尋，也接受本機存在的 commit SHA：切到 detached HEAD；勾「強制」改走 `git checkout -f`：丟棄未提交變更並取消進行中的 revert/cherry-pick/merge）、`git submodule update --init --recursive`。revert/rebase 等進行中會在卡片顯示 `gitOperation` 標章，此時 Git 拒絕一般切換。branch 名稱與 SHA 由 `workspaces.resolve_checkout()` 統一解析（完整 ref→顯示名→SHA；local 與 remote 同名優先 local），Build 目標共用同一函式。
 - 不依賴 Git Ref Manager 的內部程式；兩者都直接讀 git，所以資料一致。
 - 存在 `workspaces.json`。
 
@@ -91,13 +91,14 @@ Dev-Toolbox 第四個工具：管理多個程式碼資料夾、用可自訂的�
 ### 3.4 Job（多個同時跑）
 
 - 從「Workspace × Recipe」建立 Job，可一次勾多個 Workspace。
-- 可同時跑多個 Job；「同時最多幾個」由使用者在設定或總覽頁隨時調整（預設 2，填 0 代表不限），超過就排隊。調高後立刻從排隊中啟動，調低不影響已在跑的 Job。可隨時新增、取消排隊、停止。
+- 可同時跑多個 Job；「同時最多幾個」由使用者在設定或總覽頁隨時調整（預設 2，填 0 代表不限），超過就排隊。調高後立刻從排隊中啟動，調低不影響已在跑的 Job。可隨時新增、取消排隊、停止。帶 Build 目標的 Job 另有硬性序列化：只要已有相同 Workspace／相同 repo 的 Job 在跑就不啟動（即使上限還有空位）。
+- **Build 目標（checkout）**：`POST /api/jobs` 可帶 `checkout: { target, fetch, submodule }`（target ≤200 字元；submodule 預設 true），或 `checkouts: [同上] × 1..30` 的多目標佇列（陣列順序＝建置順序，每目標×每 Workspace 各建一個 Job，queuedAt 以 1ms 遞增保證 dispatch 依序）。Runner 在第一個建置步驟前依序執行：選配 `git fetch origin --prune` → `workspaces.resolve_checkout()` 解析目標（branch／remote／SHA）→ `git switch`（SHA 走 `--detach`）→ 選配 `git submodule update --init --recursive`，log 以 `[Build Runner]` 標注進度，status 的 `step` 顯示 `Checkout`。不提供 force：髒樹或找不到目標時 Job 直接失敗，不會建置到錯誤修訂。preview 的每個 plan 帶 `checkoutTarget`。Build 頁「選擇 Branch／Commit…」仿 TortoiseGit 選 log 對話框：左側多層樹（依分支名 `/` 逐層分組，含葉分支；heads／remotes／各 remote 預設展開，單節點最多渲染 200 項）、右側 Branch 表格（名稱、Last Commit／Author Date、Last Commit，資料來自 `GET /api/workspaces/<id>/branches`），Filter 欄同步縮減樹與表格；點分支列切換下方 `GET /api/workspaces/<id>/commits` 的 commit 清單；勾選 branch（完整 ref）／commit 加入 Build 佇列、逐筆 ↑↓ 排序或移除後一次送出 `checkouts`；手動編輯「Build 目標」欄會先確認再清掉佇列，改走單筆 `checkout`。
 - **衝突警告**：
-  - 同一個資料夾已有 Job 在跑或排隊 → 紅色警告，預設不允許（要勾「我知道」才放行）。
+  - 同一個資料夾已有 Job 在跑或排隊 → 紅色警告，預設不允許（要勾「我知道」才放行）。例外：新 Job 與既有 ACTIVE Job **都**自帶 Build 目標時改回黃色 `QUEUE_SAME_WORKSPACE`（201 放行，dispatch 保證序列化執行）。
   - 不同 worktree 但同一個 repo（`git rev-parse --git-common-dir` 相同）→ 黃色提醒。
 - 停止：用 `taskkill /PID <pid> /T /F` 結束整個行程樹。
 - **架構**：每個 Job 由獨立的 runner 子行程執行（`python -m build_runner.runner <jobId>`），狀態寫在 `jobs\<jobId>\status.json`、輸出寫在 `jobs\<jobId>\build.log`。Web、CLI、MCP 都讀同一份檔案，所以關掉網頁不會中斷 build，三種介面看到的也一致。
-- status.json：`{ id, workspace, recipe, argvPreview, state: queued|running|success|failed|stopped, step, startedAt, endedAt, exitCode, pid, branch, commit }`。
+- status.json：`{ id, workspace, recipe, argvPreview, checkoutTarget, state: queued|running|success|failed|stopped, step, startedAt, endedAt, exitCode, pid, branch, commit }`。
 - **互動提示跳過**：Build 停在 `Enter Your Username:`、`Enter password for ...:`、`Enter passphrase for ... (enter to skip):` 時送 Enter（空回答略過）。自動模式（`autoSkipPrompts`，預設開）偵測 log 尾端提示＋輸出停止 1.5 秒後自動送，每 Job 上限 5 次、冷卻 2 秒；手動為 log 頁「按 Enter 繼續」橫幅與 MCP `send_enter`。
   - **雙通道投遞**：① 寫 `\r\n` 到步驟行程的 stdin pipe；② `AttachConsole` 附加到步驟行程樹的主控台，以 `WriteConsoleInput` 注入 VK_RETURN（`build_runner/console.py`）。第 ② 條是必要的：`getpass` 類提示直接從主控台讀字元、題目也不會進 log，只有 pipe 通道會漏掉。任一通道送達即算成功，才清掉 `enter.request` 旗標。未被當前提示吃掉的 Enter 會滯留佇列、可能答到後續的主控台讀取（例如 bat 結尾的 `pause`）——自動模式以每次注入前 Flush＋每 Job 上限 5 次封頂，此取換在「全部提示都要跳過」的場景下可接受。
   - `inject_enter()` 開頭先 `FreeConsole()`（呼叫端自帶主控台時 `AttachConsole` 回 ACCESS_DENIED），結束後若原本有主控台以 `AttachConsole(ATTACH_PARENT_PROCESS)` 還原（僅對繼承自父行程的主控台保證是同一個；生產 runner 為 DETACHED，不受影響）。注入前主控台輸入佇列先 Flush 確保只剩這次 Enter——若操作人員正在可見的步驟視窗裡親手輸入，其輸入會被一併清掉。
@@ -208,13 +209,15 @@ exit code 照 TOOL-SPEC（0 成功、1 失敗、3 參數錯、4 取消、5 環�
 | 方法與路徑 | 用途 |
 | --- | --- |
 | `GET/POST/DELETE /api/workspaces` | Workspace 管理；GET 不吃 `git status`（大 repo 慢），未提交變更要由 `GET /api/workspaces/dirty`（並行檢查各 Workspace）取；`POST /api/workspaces/import-worktrees` |
-| `POST /api/workspaces/<id>/git` | `{ action: refresh|pull|checkout|submodule, branch }`；checkout 另可帶 `force: true`（`git checkout -f`，丟棄未提交變更、取消進行中的 sequencer 操作）。任務完成後的 `workspace` 含 `gitOperation`（revert/rebase/… 進行中標記） |
+| `POST /api/workspaces/<id>/git` | `{ action: refresh|pull|checkout|submodule, branch }`；checkout 的 `branch` 也接受本機可解析的 commit SHA（切 detached HEAD），另可帶 `force: true`（`git checkout -f`，丟棄未提交變更、取消進行中的 sequencer 操作）。任務完成後的 `workspace` 含 `gitOperation`（revert/rebase/… 進行中標記） |
+| `GET /api/workspaces/<id>/commits?ref=&limit=` | Build 頁「選擇 Branch／Commit…」：列 `ref`（預設 HEAD，可填 branch／remote／SHA，經 `resolve_checkout` 解析）上最新最多 200 筆 commit，回傳 `{ ref, resolved, commits: [{ sha, short, date, author, subject }] }` |
+| `GET /api/workspaces/<id>/branches` | Branch 挑選表格：`for-each-ref --sort=-committerdate --format=…iso8601-strict…`（排除 symref；iso8601-strict 不受 zh-CN locale 影響），回傳 `{ branches: [{ ref, name, group, remote, date, authorDate, author, sha, subject }] }`，group 為 `heads`／`remotes/<remote>`；非 Git 資料夾或 Git 失敗時回 `{ branches: [], error }`（HTTP 200，讓對話框仍能開） |
 | `GET/POST/DELETE /api/paramsets`、`POST /api/paramsets/import` | 參數表 |
 | `GET/POST/DELETE /api/recipes` | Recipe |
 | `GET/POST/DELETE /api/artifact-rules`、`POST /api/artifact-rules/preview` | 產出物規則（GET 第一筆為唯讀內建 `@builtin:bios-rom-package`） |
 | `GET /api/packs/inventory`、`POST /api/packs/export`、`POST /api/packs/preview`、`POST /api/packs/import` | 設定包：列出可匯出項目、匯出（回傳 JSON 內容與檔名）、預覽匯入計畫（`decisions` 為 `{ "<section>:<名稱>": "overwrite|rename|skip" }`）、寫入（需 `confirm: true`，覆蓋前備份到 `backups\`） |
-| `POST /api/jobs/check` | 建立前檢查衝突，回傳警告清單 |
-| `POST /api/jobs` | 建立 Job（可多個 Workspace） |
+| `POST /api/jobs/check` | 建立前檢查衝突，回傳警告清單（帶 checkout 目標時同資料夾改回 `QUEUE_SAME_WORKSPACE` 黃色警告） |
+| `POST /api/jobs` | 建立 Job（可多個 Workspace）；選填 `checkout: { target, fetch, submodule }` 或 `checkouts: [...] × 1..30`（多目標佇列，陣列順序＝建置順序），Runner 建置前先切到該 branch／SHA 並更新 submodule，preview 每筆 plan 含 `checkoutTarget` |
 | `GET /api/jobs`、`GET /api/jobs/<id>` | 列表／狀態 |
 | `GET /api/jobs/<id>/log?from=<offset>` | 增量 log；`?download=1` 下載 `.log` 檔 |
 | `GET /api/jobs/<id>/search?q=&kind=error|fail|warning` | 搜尋 |

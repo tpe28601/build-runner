@@ -3,7 +3,7 @@
 from contextlib import contextmanager
 import ctypes
 from ctypes import wintypes
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import os
 from pathlib import Path
 import re
@@ -190,26 +190,36 @@ def request_enter(data, job_id):
     (job_dir(data, job_id) / "enter.request").write_text(now(), encoding="utf-8")
 
 
-def check_conflicts(data, path, common, force=False, *, rows=None):
+def check_conflicts(data, path, common, force=False, *, rows=None, checkout=None):
     warnings = []
     key = workspaces.path_key(path)
     for row in list_jobs(data) if rows is None else rows:
         if row["state"] not in ACTIVE:
             continue
         if workspaces.path_key(row["workspacePath"]) == key:
-            if not force:
+            if checkout and row.get("checkoutTarget"):
+                # Both jobs carry their own checkout target, and dispatch runs
+                # same-repo checkout jobs one at a time: queueing is safe.
+                warnings.append({"code": "QUEUE_SAME_WORKSPACE", "message": "Same workspace; jobs run serially.",
+                                 "jobId": row["id"]})
+            elif not force:
                 raise ToolError("WORKSPACE_CONFLICT", "同一資料夾已有執行中或排隊的 Job。", jobId=row["id"])
-            warnings.append({"code": "WORKSPACE_CONFLICT", "message": "Same workspace folder.", "jobId": row["id"]})
+            else:
+                warnings.append({"code": "WORKSPACE_CONFLICT", "message": "Same workspace folder.", "jobId": row["id"]})
         elif common and row.get("gitCommonDir") == common:
             warnings.append({"code": "SHARED_GIT_DIR", "message": "Workspaces share a Git repository.", "jobId": row["id"]})
     return warnings
 
 
-def job_plan(workspace, recipe, recipe_name, preset, table, overrides, artifact_rules):
+def job_plan(workspace, recipe, recipe_name, preset, table, overrides, artifact_rules, checkout=None, state=None):
     plan = recipes.prepare(workspace, recipe, preset, table=table, overrides=overrides)
     plan["artifactRules"] = artifact_rules
+    if checkout:
+        # The runner checks this target out (and refreshes submodules) right
+        # before the first step, so queued jobs each build their own revision.
+        plan["checkout"] = checkout
     path = str(plan["workspacePath"])
-    git = workspaces.git_state(path, include_dirty=False)
+    git = state or workspaces.git_state(path, include_dirty=False)
     preview = {
         "workspace": workspace["name"],
         "workspaceId": workspace["id"],
@@ -219,6 +229,7 @@ def job_plan(workspace, recipe, recipe_name, preset, table, overrides, artifact_
         "branch": git["branch"],
         "commit": git["commit"],
         "gitCommonDir": git["gitCommonDir"],
+        "checkoutTarget": (checkout or {}).get("target"),
         "params": plan["params"],
     }
     return preview, plan
@@ -229,11 +240,11 @@ def start(data, workspace, recipe_name, preset=None, *, force=False, dry_run=Fal
     return rows[0], warnings
 
 
-def create_queued_job(data, preview, plan, *, pending=False):
+def create_queued_job(data, preview, plan, *, pending=False, queued_at=None):
     row = {
         **preview,
         "id": uuid4().hex, "state": "queued", "step": None,
-        "queuedAt": now(), "startedAt": None, "endedAt": None, "exitCode": None,
+        "queuedAt": queued_at or now(), "startedAt": None, "endedAt": None, "exitCode": None,
         "pid": None, "argv": [],
     }
     folder = job_dir(data, row["id"])
@@ -244,7 +255,7 @@ def create_queued_job(data, preview, plan, *, pending=False):
 
 
 def start_many(data, workspace_rows, recipe_name, preset=None, *, force=False, dry_run=False, overrides=None,
-               restrict_values=False):
+               restrict_values=False, checkouts=None):
     recipe = recipes.get_recipe(data, recipe_name)
     uses_params = any(isinstance(step, dict) and step.get("enabled") is not False and step.get("useParams")
                       for step in recipe["steps"])
@@ -258,7 +269,15 @@ def start_many(data, workspace_rows, recipe_name, preset=None, *, force=False, d
             if (param["type"] == "value" and isinstance(value, str)
                     and (re.search(r'[&|<>^%!()"\r\n\x00]', value) or value.lstrip().startswith(("-", "/", "@")))):
                 raise ToolError("INVALID_PARAM_VALUE", f"{param['flag']} 的自訂值包含不安全的字元。")
-    plans = [job_plan(row, recipe, recipe_name, preset, table, overrides, artifact_rules) for row in workspace_rows]
+    # An ordered list of checkout targets (multi-target Build queue): one plan
+    # per checkout × workspace, target order outer so each workspace receives
+    # its jobs in the order the user picked them. git_state is identical for
+    # every plan of one workspace, so query it once per workspace (a 30-target
+    # batch would otherwise spawn ~90 git processes just for branch/commit).
+    states = {row["id"]: workspaces.git_state(row["path"], include_dirty=False) for row in workspace_rows}
+    plans = [job_plan(row, recipe, recipe_name, preset, table, overrides, artifact_rules, checkout,
+                      state=states[row["id"]])
+             for checkout in (checkouts or [None]) for row in workspace_rows]
     if not dry_run and os.name != "nt":
         raise ToolError("WINDOWS_REQUIRED", "只能在 Windows 上執行 Job。", 5)
 
@@ -266,8 +285,16 @@ def start_many(data, workspace_rows, recipe_name, preset=None, *, force=False, d
         if git_lock_path(data).exists():
             raise ToolError("JOB_BUSY", "Git 操作進行中，請等它完成後再試。", 1)
         warnings = []
-        for preview, _ in plans:
-            warnings.extend(check_conflicts(data, preview["workspacePath"], preview["gitCommonDir"], force, rows=rows))
+        for preview, plan in plans:
+            for warning in check_conflicts(data, preview["workspacePath"], preview["gitCommonDir"], force,
+                                           rows=rows, checkout=plan.get("checkout")):
+                # A 30-target batch pairs every plan with every earlier job, so
+                # the same (code, jobId) would repeat 30 times: report each pair
+                # once to keep the preview readable.
+                key = (warning["code"], warning.get("jobId"))
+                if any((w["code"], w.get("jobId")) == key for w in warnings):
+                    continue
+                warnings.append(warning)
             rows.append({**preview, "state": "queued", "id": None})
         return warnings
 
@@ -279,7 +306,15 @@ def start_many(data, workspace_rows, recipe_name, preset=None, *, force=False, d
         active = list_jobs(data)
         recover_dead(data, active)
         warnings = validate(active)
-        ids = [create_queued_job(data, preview, plan)["id"] for preview, plan in plans]
+        # list_jobs dispatches by (queuedAt, id); within one batch the ms clock
+        # can tie and then the random id wins. Nudge each queuedAt up so the
+        # multi-target queue keeps the exact order the user arranged.
+        stamp = datetime.now(timezone.utc)
+        ids = []
+        for preview, plan in plans:
+            queued_at = stamp.isoformat(timespec="milliseconds")
+            ids.append(create_queued_job(data, preview, plan, queued_at=queued_at)["id"])
+            stamp = max(stamp + timedelta(milliseconds=1), datetime.now(timezone.utc))
         dispatch(data)
         return [get_job(data, job_id) for job_id in ids], warnings
 
@@ -293,10 +328,18 @@ def dispatch(data, *, breakaway=False):
     if breakaway:
         flags |= subprocess.CREATE_BREAKAWAY_FROM_JOB
     running = sum(row["state"] == "running" for row in rows)
+    running_rows = [row for row in rows if row["state"] == "running"]
     for row in rows:
         if maximum and running >= maximum:
             break
         if row["state"] != "queued":
+            continue
+        if row.get("checkoutTarget") and any(
+                workspaces.path_key(active["workspacePath"]) == workspaces.path_key(row["workspacePath"]) or
+                (row.get("gitCommonDir") and active.get("gitCommonDir") == row["gitCommonDir"])
+                for active in running_rows):
+            # A checkout job rewrites the working tree: never overlap another
+            # job on the same workspace or repo, even under a higher limit.
             continue
         try:
             child = subprocess.Popen(
@@ -320,6 +363,7 @@ def dispatch(data, *, breakaway=False):
             child.wait()
             raise
         running += 1
+        running_rows.append(row)
 
 
 def finish(data, row, state, exit_code, *, message=None, report=None):
@@ -409,17 +453,20 @@ def restart(data, job_id):
             # common path lock-free.
             git = workspaces.git_state(original["workspacePath"], include_dirty=False)
         git_common = git["gitCommonDir"] if git else original.get("gitCommonDir")
-        warnings = check_conflicts(data, original["workspacePath"], git_common, rows=peers)
+        # A restart re-runs the saved plan, checkout target included; the conflict
+        # check and the dispatch serialiser must both see it as a checkout job.
+        plan = read_json(job_dir(data, replacement_id or job_id) / "plan.json")
+        checkout = plan.get("checkout") if isinstance(plan, dict) else None
+        warnings = check_conflicts(data, original["workspacePath"], git_common, rows=peers, checkout=checkout)
 
         if not replacement_id:
-            plan = read_json(job_dir(data, job_id) / "plan.json")
             if not isinstance(plan, dict) or not plan.get("steps"):
                 raise ToolError("JOB_PLAN_NOT_FOUND", "找不到原 Job 的執行計畫。")
             if any(not Path(step["cwd"]).is_dir() for step in plan["steps"]):
                 raise ToolError("INVALID_WORKSPACE", "原 Job 的工作資料夾已不存在。")
             preview = {key: original.get(key) for key in (
                 "workspace", "workspaceId", "workspacePath", "recipe", "argvPreview",
-                "params",
+                "params", "checkoutTarget",
             )}
             preview.update(branch=git["branch"], commit=git["commit"], gitCommonDir=git_common,
                            restartedFrom=job_id)

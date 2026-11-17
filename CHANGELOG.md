@@ -1,6 +1,16 @@
 # Changelog
 
-## [Unreleased]
+## [0.6.0] - 2026-11-17
+
+### 新功能
+
+- **建置前 Checkout**：Build 頁可填「Build 目標」（branch、remote branch 或 commit SHA），Runner 會先切到該修訂再建置，預設一併執行 `git submodule update --init --recursive`（可取消勾選），並可選擇先 `git fetch origin --prune`。留空則直接在目前位置建置。目標找不到或工作區為髒樹時，Job 在 Checkout 步驟失敗，不會建置到錯誤的修訂。
+- **同 Workspace 排隊建置**：兩個 Job 都自帶 Build 目標時，同一資料夾（或同一 Git repo）不再視為衝突，可排隊；調度器會依序一次執行一個 checkout Job，避免互搶工作區。
+- Workspace 卡的切換框與 Build 目標採同一套解析規則：完整 ref、顯示名稱（如 `main`、`origin/main`）與 commit SHA（4–40 位十六進位）皆可，local 與 remote 同名時以 local 優先。
+- Build 預覽、Job 卡片與建置 log 會顯示 checkout 目標與執行進度。
+- 「選擇 Branch／Commit…」（仿 TortoiseGit 選 log 對話框）：左側多層樹依分支名的 `/` 逐層分組（heads／remotes／各 remote 預設展開，群組與葉分支混排、可逐層收合），右側分支表格（Branch Name、Date Last Commit、Last Author Date、Last Commit），上方 Filter 可依名稱、作者、SHA、commit 訊息即時過濾（樹同步縮減）；點分支列可看該分支最新 100 筆 commits。可勾選多個 branch／commit 排成 Build 佇列，逐筆用 ↑↓ 調整順序或移除（手動編輯 Build 目標欄會先確認才清佇列）；送出後依順序對每個目標各建一個 Job，同一 Workspace 依序 checkout＋建置。樹與表格字級加大，branch 清單日期改用不受中文語系影響的格式。
+
+### 修正
 
 - 建置、衝突檢查、Recipe、參數表與 Workspace 的錯誤訊息改為正體中文。
 - 由 Hub 啟動時，自動檢查更新不再回傳 403，瀏覽器主控台不再出現錯誤訊息。

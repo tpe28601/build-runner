@@ -60,6 +60,21 @@ def integer(query, field, default, minimum=0, maximum=2**53 - 1):
     return int(value)
 
 
+def checkout_spec(raw):
+    """Normalise one Build checkout descriptor; returns None when target is empty."""
+    if not isinstance(raw, dict):
+        raise HttpError(400, "INVALID_CHECKOUT", "checkout 必須是 target/fetch/submodule 組成的物件。")
+    target = raw.get("target")
+    if not isinstance(target, str):
+        raise HttpError(400, "INVALID_CHECKOUT", "Build 目標必須是字串。")
+    target = target.strip()
+    if len(target) > 200:
+        raise HttpError(400, "INVALID_CHECKOUT", "Build 目標長度超過 200 字元。")
+    if not target:
+        return None
+    return {"target": target, "fetch": bool(raw.get("fetch")), "submodule": bool(raw.get("submodule", True))}
+
+
 def tool_error(exc):
     status = 400
     if exc.code.endswith("_NOT_FOUND"):
@@ -132,6 +147,12 @@ class Api:
         git_route = re.fullmatch(r"/api/workspaces/([\w-]+)/git", path)
         if method == "POST" and git_route:
             return self.git_action(self.workspace_by_id(git_route[1]), body)
+        commits_route = re.fullmatch(r"/api/workspaces/([\w-]+)/commits", path)
+        if method == "GET" and commits_route:
+            return self.workspace_commits(self.workspace_by_id(commits_route[1]), query)
+        branches_route = re.fullmatch(r"/api/workspaces/([\w-]+)/branches", path)
+        if method == "GET" and branches_route:
+            return self.workspace_branches(self.workspace_by_id(branches_route[1]))
         task = re.fullmatch(r"/api/git-tasks/([a-f0-9]{32})", path)
         if method == "GET" and task:
             with self.mutations:
@@ -323,6 +344,70 @@ class Api:
                 return row
         raise HttpError(404, "WORKSPACE_NOT_FOUND", "找不到指定的 Workspace。")
 
+    def workspace_commits(self, workspace, query):
+        """List recent commits reachable from ref (default HEAD) for the Build dialog."""
+        ref = (query.get("ref") or [""])[0].strip()
+        if len(ref) > 200 or re.search(r"[\s\x00]", ref):
+            raise HttpError(400, "INVALID_ARGUMENTS", "ref 不可包含空白字元，長度也不可超過 200 字元。")
+        limit = integer(query, "limit", 60, minimum=1, maximum=200)
+        path = workspace["path"]
+        resolved = ("ref", "HEAD") if not ref or ref == "HEAD" else workspaces.resolve_checkout(path, ref)
+        if not resolved:
+            raise HttpError(404, "CHECKOUT_TARGET_NOT_FOUND", f"本機找不到「{ref}」。")
+        # resolve_checkout only ever yields refs seen in for-each-ref or a
+        # rev-parse'd SHA, so the argument can never smuggle flags into git.
+        # required=True: a timeout or broken repo must not masquerade as 404.
+        out = workspaces.git(path, "log", "-n", str(limit), "--format=%H%x1f%h%x1f%ci%x1f%an%x1f%s",
+                             resolved[1], required=True, timeout=60)
+        commits = []
+        for line in out.splitlines():
+            fields = line.split("\x1f")
+            if len(fields) == 5:
+                commits.append({"sha": fields[0], "short": fields[1], "date": fields[2][:16],
+                                "author": fields[3], "subject": fields[4]})
+        return ok({"ref": ref or "HEAD", "resolved": resolved[1], "commits": commits})
+
+    @staticmethod
+    def _ref_date(iso_strict):
+        """'2026-11-13T09:38:41+08:00' -> '2026-11-13 09:38' (locale-independent)."""
+        return iso_strict[:10] + " " + iso_strict[11:16]
+
+    def workspace_branches(self, workspace):
+        """Branch table for the Build dialog: every local/remote branch with its tip."""
+        # %09 separated; subject may contain tabs so it is split in last. The
+        # values only ever go to the UI, never back into a git argument list —
+        # checkout still resolves typed names through resolve_checkout().
+        # iso8601-strict (not iso8601): plain iso8601 runs through strftime and
+        # prints 上午/下午 + 12-hour hours on zh-CN Git for Windows.
+        try:
+            out = workspaces.git(workspace["path"], "for-each-ref", "--sort=-committerdate",
+                                 "--format=%(refname)%09%(symref)%09%(committerdate:iso8601-strict)%09"
+                                 "%(authordate:iso8601-strict)%09%(authorname)%09%(objectname:short)%09%(subject)",
+                                 "refs/heads", "refs/remotes", required=True, timeout=60)
+        except ToolError as exc:
+            # Not a Git repo (or git failed): the dialog shows the reason and
+            # stays usable for commits typed by hand, instead of erroring out.
+            return ok({"branches": [], "error": str(exc)})
+        branches = []
+        for line in out.splitlines():
+            fields = line.split("\t", 6)
+            # fields[1] (symref) is non-empty only for symbolic refs like origin/HEAD.
+            if len(fields) < 7 or fields[1]:
+                continue
+            ref = fields[0]
+            if ref.startswith("refs/heads/"):
+                name, group, remote = ref[len("refs/heads/"):], "heads", None
+            elif ref.startswith("refs/remotes/"):
+                name = ref[len("refs/remotes/"):]
+                remote = name.partition("/")[0]
+                group = "remotes/" + remote
+            else:
+                name, group, remote = ref, "other", None
+            branches.append({"ref": ref, "name": name, "group": group, "remote": remote,
+                             "date": self._ref_date(fields[2]), "authorDate": self._ref_date(fields[3]),
+                             "author": fields[4], "sha": fields[5], "subject": fields[6]})
+        return ok({"branches": branches})
+
     def workspace_route(self, method, body):
         if method == "GET":
             last = {row["workspaceId"]: row["state"] for row in history.list_history(self.data)}
@@ -446,27 +531,35 @@ class Api:
             elif action == "submodule":
                 # 切分支後同步子模組到該分支記錄的 commit；大型 repo 慢，給 30 分鐘
                 workspaces.git(path, "submodule", "update", "--init", "--recursive", required=True, timeout=1800)
-            elif branch not in refs:
-                raise ToolError("INVALID_BRANCH", "請選擇列出的 local 或 remote branch。")
-            elif branch.startswith("refs/heads/"):
-                if force:
-                    # checkout -f is the only command that gets past Git's sequencer
-                    # guard ("cannot switch branch while reverting"); switch
-                    # --discard-changes is still refused. It discards tracked edits
-                    # and cancels revert/cherry-pick/merge (untracked files remain).
-                    # No `--` separator: checkout reads arguments after it as pathspecs.
-                    workspaces.git(path, "checkout", "-f", branch.removeprefix("refs/heads/"),
+            else:
+                kind, value = ("ref", branch) if branch in refs else workspaces.resolve_checkout(path, branch) or (None, None)
+                if kind is None:
+                    raise ToolError("INVALID_BRANCH", "請選擇列出的 local 或 remote branch，或輸入本機已存在的 commit SHA。")
+                if kind == "sha":
+                    # Detached checkout of a commit that no listed ref points at.
+                    if force:
+                        workspaces.git(path, "checkout", "-f", "--detach", value, required=True, timeout=600)
+                    else:
+                        workspaces.git(path, "switch", "--detach", value, required=True, timeout=600)
+                elif value.startswith("refs/heads/"):
+                    if force:
+                        # checkout -f is the only command that gets past Git's sequencer
+                        # guard ("cannot switch branch while reverting"); switch
+                        # --discard-changes is still refused. It discards tracked edits
+                        # and cancels revert/cherry-pick/merge (untracked files remain).
+                        # No `--` separator: checkout reads arguments after it as pathspecs.
+                        workspaces.git(path, "checkout", "-f", value.removeprefix("refs/heads/"),
+                                       required=True, timeout=600)
+                    else:
+                        # 600s: monorepo checkouts switch slowly; the 10s default was tight.
+                        workspaces.git(path, "switch", "--", value.removeprefix("refs/heads/"),
+                                       required=True, timeout=600)
+                elif force:
+                    workspaces.git(path, "checkout", "-f", "--track", value.removeprefix("refs/remotes/"),
                                    required=True, timeout=600)
                 else:
-                    # 600s: monorepo checkouts switch slowly; the 10s default was tight.
-                    workspaces.git(path, "switch", "--", branch.removeprefix("refs/heads/"),
+                    workspaces.git(path, "switch", "--track", "--", value.removeprefix("refs/remotes/"),
                                    required=True, timeout=600)
-            elif force:
-                workspaces.git(path, "checkout", "-f", "--track", branch.removeprefix("refs/remotes/"),
-                               required=True, timeout=600)
-            else:
-                workspaces.git(path, "switch", "--track", "--", branch.removeprefix("refs/remotes/"),
-                               required=True, timeout=600)
 
     def recipe_route(self, method, body):
         if method == "GET":
@@ -639,9 +732,22 @@ class Api:
         if preview:
             jobs.reconcile(self.data)
         preset = string(body, "preset") if body.get("preset") is not None else None
+        # checkouts: ordered Build queue (one job per target); checkout: the
+        # single-target form kept for compatibility. Array order is queue order.
+        batch = body.get("checkouts")
+        if batch is None:
+            raw = body.get("checkout")
+            spec = None if raw is None or raw == {} else checkout_spec(raw)
+            specs = [spec] if spec else []
+        else:
+            if not isinstance(batch, list) or not 1 <= len(batch) <= 30:
+                raise HttpError(400, "INVALID_CHECKOUT", "checkouts 必須是 1 到 30 筆目標。")
+            specs = [checkout_spec(raw) for raw in batch]
+            if any(not spec for spec in specs):
+                raise HttpError(400, "INVALID_CHECKOUT", "checkouts 每一筆都要有非空的 target。")
         result, warnings = jobs.start_many(self.data, rows, name, preset,
                                            force=body.get("confirm") is True, dry_run=preview,
-                                           overrides=body.get("params"))
+                                           overrides=body.get("params"), checkouts=specs or None)
         return ok(result, 200 if preview else 201, warnings=warnings)
 
     def job_route(self, method, job_id, action, query, body):

@@ -95,6 +95,14 @@
               <div id="build-workspaces" class="build-workspace-grid"></div>
             </fieldset>
             <label class="tb-field"><span class="tb-field__label build-label">2. 選擇 Recipe</span><select id="recipe" class="tb-select" required></select></label>
+            <label class="tb-field"><span class="tb-field__label build-label">Build 目標（選填：branch／remote／commit SHA）</span>
+              <input id="build-target" class="tb-input tb-input--mono" list="build-target-list" placeholder="留空＝直接在目前位置建置；例如 origin/main、BiosRelease/… 或 4f50af7a">
+              <datalist id="build-target-list"></datalist></label>
+            <div class="row"><button id="build-pick" class="tb-btn" type="button" aria-haspopup="dialog" aria-controls="commit-pick"><i data-tb-icon="git-branch"></i>選擇 Branch／Commit…</button>
+              <span id="build-picked" class="tb-muted tb-small"></span></div>
+            <ol id="build-queue" class="commit-queue" hidden></ol>
+            <label class="check"><input type="checkbox" id="build-submodule" checked><span>Checkout 後更新 Submodule（git submodule update --init --recursive）。</span></label>
+            <label class="check"><input type="checkbox" id="build-fetch"><span>先 fetch origin（目標只存在遠端時用；大 repo 較久）。</span></label>
             <fieldset id="build-parameters" class="stack" hidden>
               <legend>3. 選擇參數</legend>
               <div class="editor-fields">
@@ -391,6 +399,26 @@
         <button class="tb-btn" type="button" data-close="pack-import">取消</button>
         <button id="pack-import-confirm" class="tb-btn tb-btn--primary" type="submit" disabled>確認匯入</button>
       </div>
+    </form>
+  </dialog>
+  <dialog id="commit-pick" class="tb-dialog commit-dialog" aria-labelledby="commit-pick-title">
+    <h2 id="commit-pick-title" class="tb-dialog__title">選擇 Branch／Commit</h2>
+    <p id="commit-pick-hint" class="tb-small tb-muted"></p>
+    <label class="tb-field"><span class="tb-field__label">Filter</span>
+      <input id="commit-filter" type="search" class="tb-input" placeholder="依 Refname、Subject、Authors、SHA-1 過濾分支"></label>
+    <div class="commit-pick-body">
+      <div id="ref-tree" class="ref-tree"></div>
+      <div id="branch-table" class="branch-table" role="table"></div>
+    </div>
+    <p id="commit-ref-hint" class="tb-small tb-muted"></p>
+    <div id="commit-pick-list" class="commit-list"></div>
+    <div class="commit-pick-queue-field">
+      <span class="tb-field__label">Build 佇列（由上而下依序建置）</span>
+      <ol id="commit-pick-queue" class="commit-queue"></ol>
+      <button id="commit-pick-clear" class="tb-btn tb-btn--small" type="button">清空佇列</button>
+    </div>
+    <form method="dialog" class="tb-dialog__actions">
+      <button class="tb-btn" type="button" id="commit-pick-close">關閉</button>
     </form>
   </dialog>
   <div class="tb-toast-area" role="status" aria-atomic="true"><div id="toast" class="tb-toast" hidden></div></div>

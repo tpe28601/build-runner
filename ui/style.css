@@ -213,6 +213,41 @@ input[type="file"] { min-width: 0; max-width: 100%; }
 #ai-panel .row { align-items: end; }
 #ai-panel .ai-range-field { flex: 0 0 92px; }
 #ai-preview-field textarea { white-space: pre; }
+/* Build 頁的 Branch／Commit 挑選對話框：左樹右表（仿 TortoiseGit），勾選排成 Build 佇列 */
+.commit-dialog { width: min(1400px, 100%); }
+.commit-pick-body { display: grid; grid-template-columns: clamp(280px, 28vw, 460px) minmax(0, 1fr); gap: 0; border: 1px solid var(--tb-border); border-radius: 8px; margin-block: var(--tb-space-2); }
+.ref-tree { display: grid; align-content: start; gap: 1px; padding: var(--tb-space-2); border-inline-end: 1px solid var(--tb-border); max-height: 40vh; overflow: auto; }
+.ref-node-row { display: flex; align-items: center; gap: 2px; padding-inline-end: 6px; border-radius: 6px; min-width: 0; }
+.ref-node-row.is-active { background: var(--tb-accent-soft); }
+.ref-node-row.is-active .ref-node { color: var(--tb-accent); font-weight: 650; }
+.ref-arrow { flex: none; width: 20px; border: 0; background: none; color: var(--tb-muted); font-size: var(--tb-fs); cursor: pointer; padding: 0; }
+.ref-node { flex: 1 1 auto; min-width: 0; text-align: left; border: 0; background: none; color: var(--tb-text); font: inherit; font-size: var(--tb-fs-xl); padding: 4px 6px; border-radius: 6px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ref-node:hover { background: var(--tb-surface-2); }
+.ref-leaf { font-size: var(--tb-fs-lg); color: var(--tb-muted); }
+.ref-more { color: var(--tb-muted); font-style: italic; }
+.branch-table { display: grid; align-content: start; gap: 1px; padding: 4px; max-height: 40vh; overflow: auto; min-width: 0; }
+.branch-row { display: grid; grid-template-columns: auto minmax(0, 1.5fr) 11.5rem 11.5rem minmax(0, 1fr); gap: var(--tb-space-3); align-items: center; padding: 4px var(--tb-space-2); border-radius: 6px; font-size: var(--tb-fs-xl); cursor: pointer; }
+.branch-row > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.branch-row:hover { background: var(--tb-accent-soft); }
+.branch-row input { margin: 0; cursor: pointer; }
+.branch-row.is-current { background: var(--tb-accent-soft); box-shadow: inset 2px 0 0 var(--tb-accent); }
+.branch-head { color: var(--tb-muted); font-weight: 600; cursor: default; position: sticky; top: 0; background: var(--tb-surface); }
+.branch-head:hover { background: var(--tb-surface); }
+.branch-name { font-weight: 550; }
+.commit-list { display: grid; gap: 2px; max-height: 30vh; overflow: auto; margin-block-end: var(--tb-space-2); }
+.commit-row { display: grid; grid-template-columns: auto 5.5rem 8.6rem 9rem minmax(0, 1fr); gap: var(--tb-space-3); align-items: center; width: 100%; padding: 5px var(--tb-space-2); border-radius: 6px; cursor: pointer; font-size: var(--tb-fs-lg); }
+.commit-row:hover { background: var(--tb-accent-soft); }
+.commit-row input { margin: 0; }
+.commit-sha { font-family: var(--tb-mono); font-size: var(--tb-fs-lg); }
+.commit-date, .commit-author { color: var(--tb-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.commit-subject { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.commit-pick-queue-field { display: grid; gap: var(--tb-space-2); margin-block: var(--tb-space-3); }
+.commit-pick-queue-field .tb-btn { justify-self: start; }
+.commit-queue { display: grid; gap: 3px; margin: 0; padding: 0; list-style: none; }
+.commit-queue-row { display: flex; align-items: center; gap: var(--tb-space-2); padding: 3px var(--tb-space-2); border: 1px solid var(--tb-border); border-radius: 6px; font-size: var(--tb-fs-xl); }
+.commit-queue-label { flex: 1 1 auto; min-width: 0; font-family: var(--tb-mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.commit-queue-move { padding: 2px 12px; font-size: var(--tb-fs-xl); }
+#build-queue { margin-block-start: var(--tb-space-2); }
 @media (max-width: 820px) {
   .job-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

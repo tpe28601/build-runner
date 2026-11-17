@@ -3,6 +3,7 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import re
 import stat
 import subprocess
 from uuid import uuid4
@@ -237,6 +238,40 @@ def dirty_flags(data):
 def repo_root(path):
     """Working tree top level, or None when the folder is not a checkout."""
     return git(path, "rev-parse", "--show-toplevel") or None
+
+
+SHA_RE = re.compile(r"[0-9a-fA-F]{4,40}")
+
+
+def resolve_checkout(path, target):
+    """Map a free-form checkout target to ("sha", full-sha) or ("ref", full-ref).
+
+    Accepts full refs (refs/heads/x), display names (x, origin/x) and commit
+    SHAs. A name that matches both a local and a remote branch resolves to the
+    local one, matching the Workspace page switch box. Returns None when the
+    repo has nothing that fits.
+    """
+    target = (target or "").strip()
+    if not target or re.search(r"[\s\x00]", target):
+        return None
+    if SHA_RE.fullmatch(target):
+        sha = git(path, "rev-parse", "--verify", "-q", target + "^{commit}")
+        if sha:
+            return ("sha", sha)
+    out = git(path, "for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes")
+    hits = []
+    for ref in (out or "").splitlines():
+        if ref.startswith("refs/heads/"):
+            display = ref[len("refs/heads/"):]
+        elif ref.startswith("refs/remotes/"):
+            display = ref[len("refs/remotes/"):]
+        else:
+            display = ref
+        if ref == target or display == target:
+            hits.append(ref)
+    if not hits:
+        return None
+    return "ref", next((ref for ref in hits if ref.startswith("refs/heads/")), hits[0])
 
 
 def list_worktrees(path):

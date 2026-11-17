@@ -391,6 +391,190 @@ class WebTests(unittest.TestCase):
         self.assertIsNone(workspace_row()["gitOperation"])
         self.assertFalse((linked / "note.txt").exists())
 
+        # A local commit SHA is accepted too and lands in a detached HEAD.
+        def head_of():
+            return subprocess.run(["git", "-C", str(linked), "rev-parse", "HEAD"],
+                                  capture_output=True, text=True, timeout=10).stdout.strip()
+
+        full = subprocess.run(["git", "-C", str(main), "rev-parse", "sample-third"],
+                              capture_output=True, text=True, timeout=10).stdout.strip()
+        task = git_task({"action": "checkout", "branch": full[:8], "confirm": True}, "success")
+        self.assertIsNone(task["workspace"]["branch"])
+        self.assertEqual(head_of(), full)
+        # An unknown SHA fails without moving the worktree.
+        git_task({"action": "checkout", "branch": "f" * 40, "confirm": True}, "failed")
+        self.assertEqual(head_of(), full)
+
+    @unittest.skipUnless(os.name == "nt" and shutil.which("git"), "Uses Git for Windows and batch files")
+    def test_build_checkout_target_and_same_workspace_queue(self):
+        ws = self.root / "Checkout build ws"
+        sample = ws / "build-sample"
+        sample.mkdir(parents=True)
+        shutil.copyfile(ROOT / "tests" / "fake_build.bat", sample / "fake build.bat")
+
+        def repo_git(*args):
+            result = subprocess.run(["git", "-C", str(ws), *args], capture_output=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return result.stdout.decode("utf-8", "replace").strip()
+
+        repo_git("init", "-b", "main")
+        identity = ("-c", "user.name=Sample", "-c", "user.email=sample@example.invalid", "-c", "commit.gpgsign=false")
+        repo_git(*identity, "add", "-A")
+        repo_git(*identity, "commit", "-qm", "base")
+        repo_git("branch", "second")
+        row = self.api("POST", "/api/workspaces", {"name": ws.name, "path": str(ws)}, code=201)["result"]
+        self.api("POST", "/api/recipes", {"name": "Checkout gate",
+                                          "env": {"BUILD_RUNNER_TEST_PYTHON": sys.executable},
+                                          "steps": [{"cwd": "build-sample", "argv": ["fake build.bat", "gate"]}]},
+                 code=201)
+        self.api("POST", "/api/recipes", {"name": "Checkout quick",
+                                          "steps": [{"cwd": "build-sample", "argv": ["fake build.bat", "success"]}]},
+                 code=201)
+
+        def final(job_id):
+            deadline = time.monotonic() + 90
+            while time.monotonic() < deadline:
+                done = self.api("GET", "/api/jobs/" + job_id)["result"]
+                if done["state"] not in ("queued", "running"):
+                    return done
+                time.sleep(0.15)
+            self.fail("job did not finish: " + job_id)
+
+        limit_before = self.api("GET", "/api/settings")["result"]["maxConcurrentJobs"]
+        self.api("POST", "/api/settings", {"maxConcurrentJobs": 2})
+        try:
+            # Job 1 checks out "second" before the gate step runs.
+            gate = self.api("POST", "/api/jobs", {"workspaceIds": [row["id"]], "recipe": "Checkout gate",
+                                                  "checkout": {"target": "second"}}, code=201)["result"][0]
+            deadline = time.monotonic() + 60
+            while not (sample / "ready.txt").exists() and time.monotonic() < deadline:
+                time.sleep(0.1)
+            if not (sample / "ready.txt").exists():
+                job = self.api("GET", "/api/jobs/" + gate["id"])["result"]
+                log = self.api("GET", "/api/jobs/" + gate["id"] + "/log?from=0")["result"]["text"]
+                self.fail("gate step did not start: state=%s step=%s message=%s log=%r"
+                          % (job["state"], job["step"], job.get("message"), log[-300:]))
+            self.assertEqual(repo_git("branch", "--show-current"), "second")
+
+            # A second checkout build queues on the same workspace instead of
+            # conflicting, and dispatch must not overlap it (limit is 2).
+            queued = self.api("POST", "/api/jobs", {"workspaceIds": [row["id"]], "recipe": "Checkout quick",
+                                                    "checkout": {"target": "main"}}, code=201)
+            quick = queued["result"][0]
+            self.assertIn("QUEUE_SAME_WORKSPACE", [w.get("code") for w in queued.get("warnings") or []])
+            time.sleep(0.8)
+            self.assertEqual(self.api("GET", "/api/jobs/" + quick["id"])["result"]["state"], "queued")
+            (sample / "release.txt").touch()
+            self.assertEqual(final(gate["id"])["state"], "success")
+            quick_done = final(quick["id"])
+            self.assertEqual(quick_done["state"], "success", quick_done)
+            self.assertEqual(quick_done["branch"], "main")
+            gate_log = self.api("GET", "/api/jobs/" + gate["id"] + "/log?from=0")["result"]["text"]
+            self.assertIn("Checkout second", gate_log)
+            self.assertIn("- Done -", gate_log)
+
+            # A missing target fails the job at the Checkout step, with no build run.
+            ghost = self.api("POST", "/api/jobs", {"workspaceIds": [row["id"]], "recipe": "Checkout quick",
+                                                   "checkout": {"target": "ghost-target"}}, code=201)["result"][0]
+            ghost_done = final(ghost["id"])
+            self.assertEqual(ghost_done["state"], "failed", ghost_done)
+            self.assertIn("ghost-target", ghost_done["message"] or "")
+            self.assertNotIn("- Done -", self.api("GET", "/api/jobs/" + ghost["id"] + "/log?from=0")["result"]["text"])
+            self.assertEqual(repo_git("branch", "--show-current"), "main")
+
+            # The commit picker lists a branch's history and rejects unknown refs.
+            listed = self.api("GET", "/api/workspaces/" + row["id"] + "/commits?ref=second")["result"]
+            self.assertEqual(listed["resolved"], "refs/heads/second")
+            self.assertEqual([commit["subject"] for commit in listed["commits"]], ["base"])
+            self.api("GET", "/api/workspaces/" + row["id"] + "/commits?ref=ghost", code=404)
+            self.api("GET", "/api/workspaces/" + row["id"] + "/commits?ref=ghost%20target", code=400)
+        finally:
+            self.api("POST", "/api/settings", {"maxConcurrentJobs": limit_before})
+
+    @unittest.skipUnless(os.name == "nt" and shutil.which("git"), "Uses Git for Windows and batch files")
+    def test_build_checkout_multi_target_queue(self):
+        ws = self.root / "Queue build ws"
+        sample = ws / "build-sample"
+        sample.mkdir(parents=True)
+        shutil.copyfile(ROOT / "tests" / "fake_build.bat", sample / "fake build.bat")
+
+        def repo_git(*args):
+            result = subprocess.run(["git", "-C", str(ws), *args], capture_output=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return result.stdout.decode("utf-8", "replace").strip()
+
+        repo_git("init", "-b", "main")
+        identity = ("-c", "user.name=Sample", "-c", "user.email=sample@example.invalid", "-c", "commit.gpgsign=false")
+        repo_git(*identity, "add", "-A")
+        repo_git(*identity, "commit", "-qm", "base")
+        repo_git("branch", "second")
+        (ws / "extra.txt").write_text("extra")
+        repo_git(*identity, "add", "-A")
+        repo_git(*identity, "commit", "-qm", "extra")
+        row = self.api("POST", "/api/workspaces", {"name": ws.name, "path": str(ws)}, code=201)["result"]
+        self.api("POST", "/api/recipes", {"name": "Queue quick",
+                                          "steps": [{"cwd": "build-sample", "argv": ["fake build.bat", "success"]}]},
+                 code=201)
+
+        def final(job_id):
+            deadline = time.monotonic() + 90
+            while time.monotonic() < deadline:
+                done = self.api("GET", "/api/jobs/" + job_id)["result"]
+                if done["state"] not in ("queued", "running"):
+                    return done
+                time.sleep(0.15)
+            self.fail("job did not finish: " + job_id)
+
+        # The order the user picked is the build order: two checkout jobs on
+        # one workspace must run serially, "second" first and "main" after.
+        batch = self.api("POST", "/api/jobs", {"workspaceIds": [row["id"]], "recipe": "Queue quick",
+                                               "checkouts": [{"target": "second"}, {"target": "main"}]}, code=201)
+        first, second = batch["result"]
+        self.assertIn("QUEUE_SAME_WORKSPACE", [w.get("code") for w in batch.get("warnings") or []])
+        self.assertLess(first["queuedAt"], second["queuedAt"])
+        first_done, second_done = final(first["id"]), final(second["id"])
+        self.assertEqual((first_done["state"], second_done["state"]), ("success", "success"))
+        self.assertEqual(first_done["branch"], "second")
+        self.assertEqual(second_done["branch"], "main")
+        self.assertGreaterEqual(second_done["startedAt"], first_done["endedAt"])
+        self.assertEqual(repo_git("branch", "--show-current"), "main")
+
+        # Branch table for the picker: every local branch with its tip, newest first.
+        tips = self.api("GET", "/api/workspaces/" + row["id"] + "/branches")["result"]["branches"]
+        self.assertEqual([item["name"] for item in tips], ["main", "second"])
+        self.assertEqual(tips[0]["subject"], "extra")
+        self.assertEqual(tips[0]["group"], "heads")
+        self.assertIsNone(tips[0]["remote"])
+        self.assertRegex(tips[0]["date"], r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$")
+        self.assertRegex(tips[0]["authorDate"], r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$")
+        self.assertTrue(tips[0]["sha"])
+        # A plain folder yields an empty list plus a reason so the dialog still opens.
+        plain = self.root / "Not a repo"
+        plain.mkdir()
+        plain_row = self.api("POST", "/api/workspaces", {"name": plain.name, "path": str(plain)}, code=201)["result"]
+        fallback = self.api("GET", "/api/workspaces/" + plain_row["id"] + "/branches")["result"]
+        self.assertEqual(fallback["branches"], [])
+        self.assertTrue(fallback["error"])
+
+        # Malformed batch bodies are rejected before any job is created.
+        jobs_before = len(self.api("GET", "/api/jobs")["result"])
+        self.api("POST", "/api/jobs", {"workspaceIds": [row["id"]], "recipe": "Queue quick",
+                                       "checkouts": {"target": "main"}}, code=400)
+        self.api("POST", "/api/jobs", {"workspaceIds": [row["id"]], "recipe": "Queue quick",
+                                       "checkouts": [{"target": " "}]}, code=400)
+        self.assertEqual(len(self.api("GET", "/api/jobs")["result"]), jobs_before)
+
+        # Restarting a failed checkout job keeps its checkout target so the
+        # retry checks out the same revision instead of building in place.
+        ghost = self.api("POST", "/api/jobs", {"workspaceIds": [row["id"]], "recipe": "Queue quick",
+                                               "checkout": {"target": "ghost-target"}}, code=201)["result"][0]
+        self.assertEqual(final(ghost["id"])["state"], "failed")
+        replacement = self.api("POST", "/api/jobs/" + ghost["id"] + "/restart", {"confirm": True}, code=201)["result"]
+        self.assertEqual(replacement["checkoutTarget"], "ghost-target")
+        self.assertEqual(replacement["recipe"], "Queue quick")
+        self.assertEqual(final(replacement["id"])["state"], "failed")
+        self.assertIn("ghost-target", replacement["checkoutTarget"])
+
     @unittest.skipUnless(os.name == "nt", "Uses Windows batch files")
     def test_multi_workspace_validation_precedes_queueing(self):
         folders = [self.root / "Sample B", self.root / "Sample C"]

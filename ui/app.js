@@ -268,7 +268,8 @@ function jobCard(row) {
   const card = element("article", "tb-card tb-card--hover stack");
   const head = element("div", "row");
   head.append(element("h2", "job-title", row.workspace), badge(row.state));
-  const details = element("p", "tb-muted", [row.recipe, row.branch, row.commit].filter(Boolean).join(" · "));
+  const details = element("p", "tb-muted",
+    [row.recipe, row.checkoutTarget && ("目標 " + row.checkoutTarget), row.branch, row.commit].filter(Boolean).join(" · "));
   const step = element("p", "tb-small", row.step ? "步驟 · " + row.step : "等待排程");
   const foot = element("div", "row");
   const elapsed = element("span", "tb-muted tb-small");
@@ -430,7 +431,7 @@ function workspaceCard(row) {
     // 候選顯示去 ref 前綴的短名；送回前再解析回完整 ref。
     const label = element("div", "tb-field branch-field");
     const input = element("input", "tb-input tb-input--mono branch-input");
-    input.placeholder = "搜尋 local 或 remote branch";
+    input.placeholder = "搜尋 local／remote branch，或貼上 commit SHA";
     input.autocomplete = "off";
     input.spellcheck = false;
     const list = element("ul", "branch-menu");
@@ -527,8 +528,9 @@ function workspaceCard(row) {
       if (!v) throw new Error("請輸入或選擇分支。");
       if (branches.includes(v)) return v;                       // 完整 ref（如自訂輸入）
       const hits = byDisplay.get(v);
-      if (!hits) throw new Error("分支「" + v + "」不在清單中，請先「重新整理 Git」。");
-      return hits.find((b) => b.startsWith("refs/heads/")) || hits[0];   // 同名優先 local
+      if (hits) return hits.find((b) => b.startsWith("refs/heads/")) || hits[0];   // 同名優先 local
+      if (/^[0-9a-fA-F]{4,40}$/.test(v)) return v;               // commit SHA：由後端驗證能否檢出（detach）
+      throw new Error("分支「" + v + "」不在清單中，也不是 commit SHA；請先「重新整理 Git」。");
     };
     const control = element("div", "branch-combo");
     control.append(input, toggle, list);
@@ -644,6 +646,19 @@ function renderBuildChoices() {
     workspaceChoice(row, "build", "check build-workspace-card")) : [
     empty("請先在 Workspace 分頁登錄資料夾。"),
   ]));
+  // 目標候選：merge 各 Workspace 已刷新的分支短名（去重）；SHA 直接打字即可
+  const list = $("build-target-list");
+  const seen = new Set();
+  list.replaceChildren();
+  for (const refs of gitDetails.values()) {
+    for (const ref of refs || []) {
+      const display = ref.replace(/^refs\/(?:heads|remotes)\//, "");
+      if (!seen.has(display)) {
+        seen.add(display);
+        list.append(new Option(display, display));
+      }
+    }
+  }
 }
 
 async function loadRecipes() {
@@ -655,6 +670,14 @@ async function loadRecipes() {
 function buildInputs() {
   const body = { workspaceIds: [...selected], recipe: $("recipe").value, confirm: $("allow-conflict").checked,
     ...buildParameterPayload() };
+  if (buildQueue.length) {
+    // Ordered multi-target queue: array order is the build order per workspace.
+    body.checkouts = buildQueue.map((item) => ({ target: item.target, submodule: $("build-submodule").checked,
+                                                 fetch: $("build-fetch").checked }));
+  } else {
+    const target = $("build-target").value.trim();
+    if (target) body.checkout = { target, submodule: $("build-submodule").checked, fetch: $("build-fetch").checked };
+  }
   if (!body.workspaceIds.length || !body.recipe) throw new Error("請選擇 Workspace 與 Recipe。");
   return body;
 }
@@ -664,12 +687,23 @@ async function checkBuild(body) {
   try {
     const { result, warnings } = await api("/jobs/check", "POST", body);
     $("preview-hint").textContent = warnings.length ? "請確認下列警告再開始 Build。" : "檢查完成，未發現衝突。";
+    const checkout = (body.checkouts && body.checkouts[0]) || body.checkout || null;
+    if (body.checkouts && body.checkouts.length > 1) {
+      $("preview").append(element("p", "tb-muted", "Build 佇列：" + body.checkouts.map((item) => item.target).join(" → ") +
+        "（每個 Workspace 依序建置）"));
+    }
     for (const plan of result) {
       $("preview").append(element("strong", "", plan.workspace));
+      if (plan.checkoutTarget) {
+        $("preview").append(element("p", "tb-muted", "Build 前會先 Checkout 到：" + plan.checkoutTarget +
+          (checkout && checkout.submodule ? "（並更新 Submodule）" : "")));
+      }
       for (const argv of plan.argvPreview) $("preview").append(element("pre", "preview-command", JSON.stringify(argv)));
     }
     for (const warning of warnings) {
-      const text = warning.code === "SHARED_GIT_DIR" ? "有 Workspaces 共用同一 Git repo。" : "有 Job 使用相同的資料夾。";
+      const text = warning.code === "SHARED_GIT_DIR" ? "有 Workspaces 共用同一 Git repo。"
+        : warning.code === "QUEUE_SAME_WORKSPACE" ? "同一 Workspace 已有自帶 Checkout 的 Job，兩者會依序執行。"
+        : "有 Job 使用相同的資料夾。";
       $("preview").append(element("p", "preview-warning", text));
     }
     buildChecked = JSON.stringify(body);
@@ -686,14 +720,282 @@ async function checkBuild(body) {
 }
 
 listen($("check-build"), "click", () => checkBuild(buildInputs()));
+
+// ----- Build 佇列：勾選多個 branch／commit，可調順序後依序建置 -----
+let buildQueue = [];          // [{ target, label }] 使用者排列順序＝建置順序
+let pickWorkspaceId = null;   // 對話框查詢用的 Workspace（多選 Workspace 時取第一個）
+
+const queueEntry = (target) => buildQueue.find((item) => item.target === target);
+
+function toggleQueue(target, label) {
+  const index = buildQueue.findIndex((item) => item.target === target);
+  if (index >= 0) buildQueue.splice(index, 1);
+  else if (buildQueue.length >= 30) { announce("Build 佇列最多 30 個目標。", true); return; }
+  else buildQueue.push({ target, label });
+  renderQueues();
+}
+
+function moveInQueue(from, to) {
+  if (to < 0 || to >= buildQueue.length) return;
+  const [item] = buildQueue.splice(from, 1);
+  buildQueue.splice(to, 0, item);
+  renderQueues();
+}
+
+function renderQueueList(list) {
+  list.replaceChildren();
+  list.hidden = !buildQueue.length;
+  buildQueue.forEach((item, index) => {
+    const line = element("li", "commit-queue-row");
+    line.append(element("span", "commit-queue-label", (index + 1) + ". " + item.label),
+                button("↑", () => moveInQueue(index, index - 1), "tb-btn commit-queue-move"),
+                button("↓", () => moveInQueue(index, index + 1), "tb-btn commit-queue-move"),
+                button("移除", () => { buildQueue.splice(index, 1); renderQueues(); }, "tb-btn commit-queue-move"));
+    list.append(line);
+  });
+}
+
+function renderQueues() {
+  renderQueueList($("commit-pick-queue"));
+  renderQueueList($("build-queue"));
+  $("commit-pick-clear").hidden = !buildQueue.length;
+  $("build-picked").textContent = buildQueue.length ? "已排入 " + buildQueue.length + " 個目標，將依序建置。" : "";
+  for (const box of document.querySelectorAll("#branch-table input, #commit-pick-list input")) {
+    box.checked = Boolean(queueEntry(box.dataset.target));
+  }
+}
+
+// ----- Branch 表格（仿 TortoiseGit 選 log 對話框）：左樹右表，可勾選入佇列 -----
+let pickBranches = [];
+let pickGroup = "all";
+let pickRef = "";
+let pickSeq = 0;
+let openNodes = new Set();     // 展開中的樹節點 path
+let targetOld = "";            // 編輯 Build 目標前的值（取消時回退）
+
+const pickFail = (error) => announce(error.message, true);
+
+// 每個 branch 的完整樹路徑：heads/<name> 或 remotes/<remote>/<name>。
+const branchPath = (branch) => (branch.group === "heads" ? "heads/" : "remotes/") + branch.name;
+
+// 樹含群組節點與葉分支（同 TortoiseGit）：依下一段名稱遞迴分組，最後段為葉。
+function makeNode(prefix, list, label) {
+  const node = { label, path: prefix, count: list.length, children: new Map(), leaves: [] };
+  const buckets = new Map();
+  for (const branch of list) {
+    const rest = branchPath(branch).slice(prefix.length + 1);
+    const cut = rest.indexOf("/");
+    if (cut < 0) { node.leaves.push(branch); continue; }
+    const seg = rest.slice(0, cut);
+    if (!buckets.has(seg)) buckets.set(seg, []);
+    buckets.get(seg).push(branch);
+  }
+  for (const [seg, sub] of [...buckets.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    node.children.set(seg, makeNode(prefix + "/" + seg, sub, seg));
+  }
+  node.leaves.sort((a, b) => a.name.localeCompare(b.name));
+  return node;
+}
+
+function inGroup(branch) {
+  if (pickGroup === "all") return true;
+  const path = branchPath(branch);
+  return path === pickGroup || path.startsWith(pickGroup + "/");
+}
+
+// Filter 字串同時縮減樹與表格（TortoiseGit 行為：不符合的分支不出現在樹上）。
+function filteredBranches() {
+  const keyword = $("commit-filter").value.trim().toLowerCase();
+  if (!keyword) return pickBranches;
+  return pickBranches.filter((branch) => (branch.name + " " + branch.subject + " " + branch.author + " " + branch.sha)
+      .toLowerCase().includes(keyword));
+}
+
+async function loadPick(ref) {
+  const seq = ++pickSeq;
+  const params = new URLSearchParams({ limit: "100" });
+  if (ref) params.set("ref", ref);
+  const { result } = await api("/workspaces/" + pickWorkspaceId + "/commits?" + params);
+  if (seq !== pickSeq) return;    // 使用者已點別的分支，丟棄遲到的舊回應
+  pickRef = ref;
+  $("commit-ref-hint").textContent = result.resolved + " 的 commits（最新 " + result.commits.length +
+    " 筆）：勾選 Commit 加入 Build 佇列";
+  const list = $("commit-pick-list");
+  list.replaceChildren();
+  for (const commit of result.commits) {
+    const line = element("label", "commit-row");
+    const box = element("input");
+    box.type = "checkbox";
+    box.dataset.target = commit.sha;
+    box.checked = Boolean(queueEntry(commit.sha));
+    listen(box, "change", () => toggleQueue(commit.sha, commit.short + " · " + commit.subject));
+    line.append(box, element("code", "commit-sha", commit.short), element("span", "commit-date", commit.date),
+                element("span", "commit-author", commit.author), element("span", "commit-subject", commit.subject));
+    list.append(line);
+  }
+  renderBranchTable();
+}
+
+async function loadBranches() {
+  const { result } = await api("/workspaces/" + pickWorkspaceId + "/branches");
+  if (result.error) announce("無法讀取分支清單：" + result.error, true);
+  pickBranches = result.branches;
+  // 預設展開 All／heads／remotes／各 remote 一層，更深的群組手動展開。
+  openNodes = new Set(["all", "heads", "remotes"]);
+  for (const branch of pickBranches) if (branch.remote) openNodes.add("remotes/" + branch.remote);
+  renderTree();
+  renderBranchTable();
+}
+
+function renderTree() {
+  const tree = $("ref-tree");
+  tree.replaceChildren();
+  const list = filteredBranches();
+  const makeRow = (depth, active) => {
+    const row = element("div", "ref-node-row" + (active ? " is-active" : ""));
+    row.style.paddingInlineStart = depth * 16 + "px";
+    tree.append(row);
+    return row;
+  };
+  const leafRow = (branch, depth) => {
+    const path = branchPath(branch);
+    const row = makeRow(depth, pickGroup === path);
+    const btn = button(branch.name.slice(branch.name.lastIndexOf("/") + 1), () => {
+      pickGroup = path;
+      renderTree();
+      renderBranchTable();
+      loadPick(branch.name).catch(pickFail);
+    }, "ref-node ref-leaf");
+    btn.title = branch.ref;
+    row.append(element("span", "ref-arrow"), btn);
+  };
+  const nodeRow = (node, depth) => {
+    const row = makeRow(depth, pickGroup === node.path);
+    const arrow = element("button", "ref-arrow");
+    arrow.type = "button";
+    const open = openNodes.has(node.path);
+    const childCount = node.children.size + node.leaves.length;
+    arrow.textContent = childCount ? (open ? "▾" : "▸") : "";
+    if (childCount) {
+      listen(arrow, "click", () => {
+        if (openNodes.has(node.path)) openNodes.delete(node.path); else openNodes.add(node.path);
+        renderTree();
+      });
+    }
+    row.append(arrow, button(node.label + " (" + node.count + ")", () => {
+      pickGroup = node.path;
+      if (childCount) openNodes.add(node.path);
+      renderTree();
+      renderBranchTable();
+    }, "ref-node"));
+    if (!open) return;
+    const items = [
+      ...[...node.children.values()].map((child) => ({ key: child.label, child })),
+      ...node.leaves.map((branch) => ({ key: branch.name.slice(branch.name.lastIndexOf("/") + 1), branch })),
+    ].sort((a, b) => a.key.localeCompare(b.key));
+    // 單一群組可能有數千分支，節點只渲染前 200 項，其餘交給右側表格。
+    for (const item of items.slice(0, 200)) {
+      if (item.child) nodeRow(item.child, depth + 1); else leafRow(item.branch, depth + 1);
+    }
+    if (items.length > 200) {
+      makeRow(depth + 1, false).append(element("span", "ref-arrow"), button(
+        "⋯ 另有 " + (items.length - 200) + " 項（點此在表格檢視）",
+        () => { pickGroup = node.path; renderTree(); renderBranchTable(); }, "ref-node ref-more"));
+    }
+  };
+  nodeRow({ label: "All", path: "all", count: list.length, children: new Map(), leaves: [] }, 0);
+  const heads = list.filter((branch) => branch.group === "heads");
+  const remotes = list.filter((branch) => branch.group.startsWith("remotes/"));
+  if (heads.length) nodeRow(makeNode("heads", heads, "heads"), 0);
+  if (remotes.length) nodeRow(makeNode("remotes", remotes, "remotes"), 0);
+}
+
+function renderBranchTable() {
+  const table = $("branch-table");
+  table.replaceChildren();
+  const head = element("div", "branch-row branch-head");
+  for (const title of ["", "Branch Name", "Date Last Commit", "Last Author Date", "Last Commit"]) {
+    head.append(element("span", "", title));
+  }
+  table.append(head);
+  const matched = filteredBranches().filter(inGroup);
+  for (const branch of matched.slice(0, 300)) {
+    const row = element("div", "branch-row" + (branch.name === pickRef ? " is-current" : ""));
+    row.title = branch.ref;
+    const box = element("input");
+    box.type = "checkbox";
+    box.dataset.target = branch.ref;      // 完整 ref：local 字面名 origin/x 時才不會與遠端撞 key
+    box.checked = Boolean(queueEntry(branch.ref));
+    listen(box, "change", () => toggleQueue(branch.ref, "Branch " + branch.name));
+    row.append(box, element("span", "branch-name", branch.name), element("span", "", branch.date),
+               element("span", "", branch.authorDate),
+               element("span", "", branch.subject + " (" + branch.sha + ")"));
+    // 點列＝下方 commit 清單切到該分支；勾 checkbox 才是加入 Build 佇列。
+    listen(row, "click", (event) => {
+      if (event.target === box) return;
+      loadPick(branch.name).catch(pickFail);
+    });
+    table.append(row);
+  }
+  if (matched.length > 300) {
+    table.append(element("p", "tb-small tb-muted", "…另有 " + (matched.length - 300) +
+                         " 個分支未顯示，請用 Filter 或選左側群組縮小範圍。"));
+  }
+}
+
+listen($("build-pick"), "click", async () => {
+  const row = workspaces.find((item) => item.id === [...selected][0]);
+  if (!row) throw new Error("請先選擇 Workspace。");
+  pickWorkspaceId = row.id;
+  pickGroup = "all";
+  $("commit-filter").value = "";
+  $("commit-pick-hint").textContent = "來源：" + row.name + "；勾選 Branch 或 Commit 加入 Build 佇列，可調整順序" +
+    (selected.size > 1 ? "；多選 Workspace 時僅依第一個 Workspace 查詢" : "");
+  $("commit-pick").showModal();
+  try {
+    await loadBranches();
+  } catch (error) {
+    pickFail(error);
+  }
+  try {
+    await loadPick($("build-target").value.trim() || row.branch || "");
+  } catch {
+    try {
+      await loadPick("");
+    } catch (error) {
+      pickFail(error);
+    }
+  }
+  renderQueues();
+});
+listen($("commit-filter"), "input", () => { renderTree(); renderBranchTable(); });
+listen($("commit-pick-clear"), "click", () => { buildQueue = []; renderQueues(); });
+listen($("commit-pick-close"), "click", () => $("commit-pick").close());
+// 手動修改 Build 目標代表改走單筆模式；確認後才清佇列，避免誤觸輸入就把排好的目標全丟。
+listen($("build-target"), "beforeinput", () => { targetOld = $("build-target").value; });
+listen($("build-target"), "input", () => {
+  if (!buildQueue.length) return;
+  if (!window.confirm("手動編輯 Build 目標會清空已排的 " + buildQueue.length + " 個佇列目標，繼續？")) {
+    $("build-target").value = targetOld;
+    return;
+  }
+  buildQueue = [];
+  renderQueues();
+});
 listen($("build-form"), "submit", async () => {
   const body = buildInputs();
   if (JSON.stringify(body) !== buildChecked) {
     const warnings = await checkBuild(body);
-    if (warnings.length) return;
+    // QUEUE_SAME_WORKSPACE just means the new checkout job lines up behind
+    // another one; that is the point of the feature, so it never blocks submit.
+    if (warnings.some((warning) => warning.code !== "QUEUE_SAME_WORKSPACE")) return;
   }
   const { result } = await api("/jobs", "POST", body);
   $("allow-conflict").checked = false;
+  $("build-target").value = "";
+  $("build-fetch").checked = false;
+  buildQueue = [];
+  renderQueues();
   buildChecked = "";
   await syncJobs();
   openLog(result[0].id);
