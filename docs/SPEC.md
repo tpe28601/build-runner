@@ -267,7 +267,7 @@ Build-Runner/
     artifacts.py    產出物規則與預覽
     history.py      歷史、匯出、清除
     schedule.py     schtasks
-    web.py          HTTP 伺服器
+    web.py          HTTP 伺服器（啟動後發佈 listener.json 供本機工具探索）
     cli.py
   mcp_server.py
   ui/  index.html  app.js  style.css  ui-kit.css  tb-theme.js  tb-icons.js

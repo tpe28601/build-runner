@@ -73,6 +73,16 @@ class WebTests(unittest.TestCase):
         status, result, _ = self.request("GET", "/api/health", headers={"Host": "invalid.example"})
         self.assertEqual((status, result["error"]["code"]), (403, "FORBIDDEN_HOST"))
 
+    def test_listener_file_advertises_the_live_url(self):
+        listener = json.loads((self.data / "listener.json").read_text(encoding="utf-8"))
+        health = self.api("GET", "/api/health")
+        self.assertEqual(listener["tool"], "build-runner")
+        self.assertEqual(listener["url"], f"http://127.0.0.1:{self.port}")
+        self.assertEqual(listener["port"], self.port)
+        self.assertEqual(listener["port"], health["port"])
+        self.assertEqual(listener["pid"], health["pid"])
+        self.assertTrue(listener["startedAt"])
+
     def test_occupied_explicit_port_exits_without_ready(self):
         result = subprocess.run(
             [sys.executable, str(ROOT / "build_runner" / "web.py"), "--port", str(self.port),

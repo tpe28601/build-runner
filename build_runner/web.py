@@ -19,7 +19,7 @@ if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from build_runner import jobs
-from build_runner.paths import ROOT, ToolError, data_dir, read_json
+from build_runner.paths import ROOT, ToolError, data_dir, read_json, write_json
 from build_runner.web_api import Api, Download, HttpError
 from standalone_update import handle_update
 
@@ -274,6 +274,27 @@ def watch_parent(server, pid):
     server.shutdown()
 
 
+def publish_listener(data, manifest, url, port):
+    """Advertise the live URL for local peers (e.g. the Culprit tool's runner_client).
+
+    Peers read this file, then verify with GET /api/health; a stale file is
+    therefore harmless, but release_listener() still cleans it up on shutdown.
+    """
+    write_json(data / "listener.json", {
+        "tool": manifest.get("id", "build-runner"), "version": manifest.get("version"),
+        "url": url, "port": port, "pid": os.getpid(), "startedAt": jobs.now(),
+    })
+
+
+def release_listener(data):
+    """Only delete the file when this instance still owns it (two servers never clobber)."""
+    try:
+        if read_json(data / "listener.json", {}).get("pid") == os.getpid():
+            (data / "listener.json").unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def bind_server(port, default):
     candidates = [port] if port is not None else [*range(default, default + 21), 0]
     for candidate in candidates:
@@ -332,6 +353,7 @@ def main(argv=None):
         server.hub_origins = loopback_origins(hub_port)
         server.api = Api(data, manifest, server)
         url = f"http://127.0.0.1:{server.server_port}"
+        publish_listener(data, manifest, url, server.server_port)
         print(f"READY {url}", flush=True)
         if args.parent_pid:
             threading.Thread(target=watch_parent, args=(server, args.parent_pid), daemon=True).start()
@@ -343,6 +365,7 @@ def main(argv=None):
             pass
         finally:
             server.api.analyses.close()
+    release_listener(data)
     return 0
 
 

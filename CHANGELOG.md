@@ -10,6 +10,7 @@
 - Workspace 卡的切換框與 Build 目標採同一套解析規則：完整 ref、顯示名稱（如 `main`、`origin/main`）與 commit SHA（4–40 位十六進位）皆可，local 與 remote 同名時以 local 優先。
 - Build 預覽、Job 卡片與建置 log 會顯示 checkout 目標與執行進度。
 - 「選擇 Branch／Commit…」（仿 TortoiseGit 選 log 對話框）：左側多層樹依分支名的 `/` 逐層分組（heads／remotes／各 remote 預設展開，群組與葉分支混排、可逐層收合），右側分支表格（Branch Name、Date Last Commit、Last Author Date、Last Commit），上方 Filter 可依名稱、作者、SHA、commit 訊息即時過濾（樹同步縮減）；點分支列可看該分支最新 100 筆 commits。可勾選多個 branch／commit 排成 Build 佇列，逐筆用 ↑↓ 調整順序或移除（手動編輯 Build 目標欄會先確認才清佇列）；送出後依順序對每個目標各建一個 Job，同一 Workspace 依序 checkout＋建置。樹與表格字級加大，branch 清單日期改用不受中文語系影響的格式。
+- **本機服務探索（listener.json）**：Web 服務啟動後把實際 URL／port／pid／開始時間寫進資料目錄的 `listener.json`（正常關閉時清除，跨程序殘留以 `/api/health` 探活為準），讓其他本機工具（如 Culprit 的「送到 Build-Runner 佇列」）不用猜 port 就能找到服務。
 
 ### 修正
 
