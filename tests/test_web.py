@@ -833,6 +833,38 @@ class WebTests(unittest.TestCase):
         self.assertEqual(replacement["state"], "success", replacement)
         self.api("POST", "/api/jobs/" + replacement["id"] + "/restart", {"confirm": True}, code=409)
 
+    @unittest.skipUnless(os.name == "nt", "Runs a Windows build job")
+    def test_build_can_override_or_disable_recipe_artifacts(self):
+        folder = self.root / "Artifact overrides"
+        folder.mkdir()
+        shutil.copyfile(ROOT / "tests" / "fake_build.bat", folder / "build.bat")
+        (folder / "image.bin").write_bytes(b"build output")
+        workspace = self.api("POST", "/api/workspaces", {"name": folder.name, "path": str(folder)}, code=201)["result"]
+        for name, dest in (("Default outputs", "default"), ("Selected outputs", "selected")):
+            self.api("POST", "/api/artifact-rules", {"name": name, "rules": [
+                {"select": ["image.bin"], "dest": dest},
+            ]}, code=201)
+        recipe = {"name": "Artifact override sample", "artifacts": "Default outputs",
+                  "steps": [{"argv": ["build.bat", "success"]}]}
+        self.api("POST", "/api/recipes", recipe, code=201)
+        base = {"workspaceIds": [workspace["id"]], "recipe": recipe["name"]}
+        for selection, expected in (({}, "Default outputs"), ({"artifactRule": ""}, None),
+                                    ({"artifactRule": "Selected outputs"}, "Selected outputs")):
+            with self.subTest(selection=selection):
+                result = self.api("POST", "/api/jobs/check", {**base, **selection})["result"]
+                self.assertEqual(result[0].get("artifactRule"), expected)
+        self.api("POST", "/api/jobs/check", {**base, "artifactRule": False}, code=400)
+        job = self.api("POST", "/api/jobs", {**base, "artifactRule": "Selected outputs"}, code=201)["result"][0]
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline and job["state"] in ("queued", "running"):
+            time.sleep(0.1)
+            job = self.api("GET", "/api/jobs/" + job["id"])["result"]
+        self.assertEqual(job["state"], "success", job)
+        self.assertEqual(job["artifacts"], [str(folder / "selected" / "image.bin")])
+        self.assertFalse((folder / "default").exists())
+        saved = self.api("GET", "/api/recipes")["result"]
+        self.assertEqual(next(row for row in saved if row["id"] == recipe["name"])["artifacts"], "Default outputs")
+
     def test_artifact_preview_for_a_job_keeps_the_repo_root(self):
         repo = self.root / "Repo package"
         (repo / "OemPkgs" / "DT" / "Platform").mkdir(parents=True)

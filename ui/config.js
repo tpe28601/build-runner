@@ -9,6 +9,7 @@ let artifactDraft;
 let artifactPreview = null;
 let artifactDirty = false;
 const builtinBiosArtifactId = "@builtin:bios-rom-package";
+const useRecipeArtifactRule = "@recipe";
 
 async function loadConfiguration() {
   const [recipes, tables, artifacts] = await Promise.all(
@@ -83,16 +84,79 @@ function buildParameterPayload() {
   return { ...(preset ? { preset } : {}), params: { ...buildOverrides } };
 }
 
+function renderBuildArtifactRules(recipe, recipeChanged) {
+  const select = $("build-artifact-rule");
+  const selected = recipeChanged || !select.options.length ? useRecipeArtifactRule : select.value;
+  const rule = recordById(configuration.artifacts, recipe?.artifacts);
+  const label = rule?.name || (recipe?.artifacts ? recipe.artifacts + "（找不到）" : "不套用");
+  selectRecords(select.id, configuration.artifacts, "不套用產出物規則",
+    selected === useRecipeArtifactRule ? "" : selected, true);
+  select.prepend(new Option("依 Recipe 設定（" + label + "）", useRecipeArtifactRule));
+  select.value = selected;
+  select.disabled = $("save-build-recipe").disabled = !recipe;
+  renderBuildArtifactPreview(recipe);
+}
+
+function selectedBuildArtifactId(recipe) {
+  const selected = $("build-artifact-rule").value;
+  return selected === useRecipeArtifactRule ? recipe.artifacts || "" : selected;
+}
+
+function renderBuildArtifactPreview(recipe = activeBuildRecipe()) {
+  const preview = $("build-artifact-preview-rules");
+  preview.replaceChildren();
+  if (!recipe) {
+    preview.append(element("p", "tb-muted", "先選擇 Recipe。"));
+    return;
+  }
+  const id = selectedBuildArtifactId(recipe);
+  if (!id) {
+    preview.append(element("p", "tb-muted", "這次建置不套用產出物規則。"));
+    return;
+  }
+  const artifact = recordById(configuration.artifacts, id);
+  if (!artifact) {
+    preview.append(element("p", "preview-warning", "找不到產出物規則組「" + id + "」。"));
+    return;
+  }
+  preview.append(element("strong", "", artifact.name));
+  for (const rule of artifact.rules) {
+    const zip = rule.zip?.enabled;
+    const zipOnly = zip && rule.zip.only;
+    const action = zipOnly ? "只建立 ZIP（保留子目錄）" : zip ? "複製檔案並建立 ZIP" : "複製檔案";
+    const item = element("fieldset", "editor-item");
+    const fields = [
+      ["資料來源", rule.root === "repo" ? "Git repo 根目錄" : "Workspace 根目錄"],
+      ["檔名或 Glob", rule.select.join("\n")],
+      ["排除 Glob", rule.exclude?.join("\n")],
+      ["產出目的地", rule.dest],
+      ["改名範本", !zipOnly && rule.rename !== "{name}{ext}" ? rule.rename : ""],
+      ["ZIP 檔名", zip ? rule.zip.file : ""],
+    ];
+    const details = element("dl", "build-artifact-preview-fields");
+    for (const [label, value] of fields) {
+      if (!value) continue;
+      const field = element("dd");
+      field.append(element("code", "", value));
+      details.append(element("dt", "tb-muted", label), field);
+    }
+    item.append(element("legend", "", action), details);
+    preview.append(item);
+  }
+}
+
 function renderBuildParameters() {
   const recipe = activeBuildRecipe();
   const table = activeBuildTable(recipe);
-  if (buildRecipeId !== $("recipe").value) {
+  const recipeChanged = buildRecipeId !== $("recipe").value;
+  if (recipeChanged) {
     buildRecipeId = $("recipe").value;
     buildOverrides = Object.create(null);
     $("build-preset").value = "";
     $("parameter-search").value = "";
     buildChecked = "";
   }
+  renderBuildArtifactRules(recipe, recipeChanged);
   $("build-parameters").hidden = !table;
   if (table) {
     fillPresets($("build-preset"), table, "依 Recipe 設定", selectedBuildPreset());
@@ -200,6 +264,45 @@ function renderBuildPreview() {
 }
 
 $("recipe").addEventListener("change", renderBuildParameters);
+$("build-artifact-rule").addEventListener("change", () => {
+  buildChecked = "";
+  renderBuildPreview();
+  renderBuildArtifactPreview();
+});
+
+listen($("save-build-recipe"), "click", () => {
+  const source = activeBuildRecipe();
+  if (!source) return;
+  $("build-save-recipe-name").value = copyName(source, configuration.recipes);
+  $("build-save-recipe-error").hidden = true;
+  $("build-save-recipe").showModal();
+  $("build-save-recipe-name").select();
+});
+
+$("cancel-build-save-recipe").addEventListener("click", () => $("build-save-recipe").close());
+listen($("build-save-recipe-form"), "submit", async () => {
+  const source = activeBuildRecipe();
+  if (!source) return;
+  const artifacts = selectedBuildArtifactId(source);
+  const name = $("build-save-recipe-name").value.trim();
+  const notice = $("build-save-recipe-error");
+  try {
+    if (!name) throw new Error("請輸入新 Recipe 名稱。");
+    if (artifacts && !recordById(configuration.artifacts, artifacts)) throw new Error("選取的產出物規則已不存在。");
+    if (configuration.recipes.some((row) => row.id.toLowerCase() === name.toLowerCase())) {
+      throw new Error("已有同名 Recipe，請使用其他名稱。");
+    }
+    await api("/recipes", "POST", { ...defaultRecipe(name, source), artifacts });
+  } catch (error) {
+    notice.textContent = error.message;
+    notice.hidden = false;
+    return;
+  }
+  $("build-save-recipe").close();
+  await loadRecipes(name);
+  announce("已另存為新 Recipe「" + name + "」。");
+});
+
 $("parameter-search").addEventListener("input", renderParameterGroups);
 $("build-preset").addEventListener("change", () => {
   buildOverrides = Object.create(null);

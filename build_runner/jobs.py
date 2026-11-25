@@ -221,6 +221,7 @@ def job_plan(workspace, recipe, recipe_name, preset, table, overrides, artifact_
         "workspaceId": workspace["id"],
         "workspacePath": path,
         "recipe": recipe.get("name") or recipe_name,
+        "artifactRule": artifact_rules["name"] if artifact_rules else None,
         "argvPreview": [step["argv"] for step in plan["steps"]],
         "branch": git["branch"],
         "commit": git["commit"],
@@ -251,12 +252,13 @@ def create_queued_job(data, preview, plan, *, pending=False, queued_at=None):
 
 
 def start_many(data, workspace_rows, recipe_name, preset=None, *, dry_run=False, overrides=None,
-               restrict_values=False, checkouts=None):
+               restrict_values=False, checkouts=None, artifact_rule=None):
     recipe = recipes.get_recipe(data, recipe_name)
     uses_params = any(isinstance(step, dict) and step.get("enabled") is not False and step.get("useParams")
                       for step in recipe["steps"])
     table = paramsets.load(data, recipe["paramset"]) if uses_params and recipe.get("paramset") else None
-    artifact_rules = artifacts.load(data, recipe["artifacts"]) if recipe.get("artifacts") else None
+    rule_name = recipe.get("artifacts") if artifact_rule is None else artifact_rule
+    artifact_rules = artifacts.load(data, rule_name) if rule_name else None
     if overrides is not None and not isinstance(overrides, dict):
         raise ToolError("INVALID_PARAMS", "參數（params）必須是物件。")
     if restrict_values and table and overrides:

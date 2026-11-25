@@ -95,6 +95,8 @@
               <div id="build-workspaces" class="build-workspace-grid"></div>
             </fieldset>
             <label class="tb-field"><span class="tb-field__label build-label">2. 選擇 Recipe</span><select id="recipe" class="tb-select" required></select></label>
+            <label class="tb-field"><span class="tb-field__label">產出物規則</span><select id="build-artifact-rule" class="tb-select" disabled></select></label>
+            <div class="row"><button class="tb-btn" type="button" id="save-build-recipe" aria-haspopup="dialog" aria-controls="build-save-recipe" disabled>另存為新 Recipe</button></div>
             <label class="tb-field"><span class="tb-field__label build-label">Build 目標（選填：branch／remote／commit SHA）</span>
               <input id="build-target" class="tb-input tb-input--mono" list="build-target-list" placeholder="留空＝直接在目前位置建置；例如 origin/main、BiosRelease/… 或 4f50af7a">
               <datalist id="build-target-list"></datalist></label>
@@ -119,7 +121,15 @@
               <button class="tb-btn tb-btn--primary" type="submit"><i data-tb-icon="play"></i>開始 Build</button>
             </div>
           </form>
-          <div class="tb-card stack"><h2>指令預覽</h2><p id="preview-hint" class="tb-muted">選擇 Workspace 與 Recipe 後按「檢查衝突」。</p><div id="preview" class="stack"></div></div>
+          <div class="tb-card stack">
+            <h2>指令預覽</h2>
+            <p id="preview-hint" class="tb-muted">選擇 Workspace 與 Recipe 後按「檢查衝突」。</p>
+            <div id="preview" class="stack"></div>
+            <section class="build-artifact-preview stack" aria-labelledby="build-artifact-preview-title">
+              <h3 id="build-artifact-preview-title">產出物規則預覽</h3>
+              <div id="build-artifact-preview-rules" class="stack"><p class="tb-muted">先選擇 Recipe。</p></div>
+            </section>
+          </div>
         </div>
       </section>
 
@@ -370,6 +380,17 @@
     <div id="page-help-content" class="page-help__body"></div>
     <form id="page-help-actions" method="dialog" class="tb-dialog__actions page-help__foot">
       <button class="tb-btn tb-btn--primary" type="submit" autofocus>了解</button>
+    </form>
+  </dialog>
+  <dialog id="build-save-recipe" class="tb-dialog" aria-labelledby="build-save-recipe-title">
+    <form id="build-save-recipe-form" class="stack">
+      <h2 id="build-save-recipe-title" class="tb-dialog__title">另存為新 Recipe</h2>
+      <label class="tb-field"><span class="tb-field__label">新 Recipe 名稱</span><input id="build-save-recipe-name" class="tb-input" maxlength="128" required></label>
+      <p id="build-save-recipe-error" class="preview-warning" role="alert" hidden></p>
+      <div class="tb-dialog__actions">
+        <button id="cancel-build-save-recipe" type="button" class="tb-btn">取消</button>
+        <button type="submit" class="tb-btn tb-btn--primary">另存 Recipe</button>
+      </div>
     </form>
   </dialog>
   <dialog id="pack-export" class="tb-dialog pack-dialog" aria-labelledby="pack-export-title">

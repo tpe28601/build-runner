@@ -95,6 +95,14 @@ legend { margin-bottom: 8px; }
 }
 .enter-banner .tb-btn { flex: none; }
 .preview-command { padding: 8px; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; background: var(--tb-surface-2); }
+.build-artifact-preview { border-top: 1px solid var(--tb-border); padding-top: 12px; }
+.build-artifact-preview-fields {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 5px 12px;
+  margin: 0;
+}
+.build-artifact-preview-fields dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .log-card { gap: 10px; }
 .log-job-controls { align-items: flex-end; }
 .log-job-controls .tb-field { flex: 1 1 240px; }

@@ -695,15 +695,17 @@ function renderBuildChoices() {
   }
 }
 
-async function loadRecipes() {
+async function loadRecipes(selectedRecipe) {
   await loadConfiguration();
-  selectRecords("recipe", configuration.recipes, "請選擇 Recipe");
+  selectRecords("recipe", configuration.recipes, "請選擇 Recipe", selectedRecipe);
   renderBuildParameters();
 }
 
 function buildInputs() {
   const body = { workspaceIds: [...selected], recipe: $("recipe").value,
     ...buildParameterPayload() };
+  const artifactRule = $("build-artifact-rule").value;
+  if (artifactRule !== useRecipeArtifactRule) body.artifactRule = artifactRule;
   const opts = { submodule: $("build-submodule").checked, fetch: $("build-fetch").checked,
                  force: $("build-force").checked };
   if (buildQueue.length) {

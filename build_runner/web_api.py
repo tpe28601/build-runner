@@ -733,6 +733,9 @@ class Api:
         if preview:
             jobs.reconcile(self.data)
         preset = string(body, "preset") if body.get("preset") is not None else None
+        artifact_rule = body.get("artifactRule")
+        if artifact_rule not in (None, ""):
+            artifact_rule = string(body, "artifactRule")
         # checkouts: ordered Build queue (one job per target); checkout: the
         # single-target form kept for compatibility. Array order is queue order.
         batch = body.get("checkouts")
@@ -748,7 +751,8 @@ class Api:
                 raise HttpError(400, "INVALID_CHECKOUT", "checkouts 每一筆都要有非空的 target。")
         result, warnings = jobs.start_many(self.data, rows, name, preset,
                                            dry_run=preview,
-                                           overrides=body.get("params"), checkouts=specs or None)
+                                           overrides=body.get("params"), checkouts=specs or None,
+                                           artifact_rule=artifact_rule)
         return ok(result, 200 if preview else 201, warnings=warnings)
 
     def job_route(self, method, job_id, action, query, body):
