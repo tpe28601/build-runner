@@ -141,6 +141,8 @@ legend { margin-bottom: 8px; }
 .artifact-results { max-height: 390px; overflow: auto; }
 .artifact-results li + li { margin-top: 6px; }
 .artifact-results .stack { gap: 0; }
+#log-artifact-location, .artifact-location { min-width: 0; max-width: 100%; }
+.artifact-location .tb-select { width: min(100%, 28rem); min-width: 0; text-overflow: ellipsis; }
 .artifact-summary { min-width: 0; max-width: 46ch; margin-top: 4px; white-space: normal; }
 .artifact-summary summary { cursor: pointer; color: var(--tb-accent); }
 .parameter-group h3 { font-size: var(--tb-fs-sm); }

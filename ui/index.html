@@ -131,6 +131,7 @@
             <span id="log-state" class="tb-badge">尚未選擇 Job</span>
             <button id="log-stop-job" class="tb-btn tb-btn--icon tb-btn--danger" type="button" title="停止建置" aria-label="停止建置" hidden><i data-tb-icon="square"></i></button>
             <button id="log-restart-job" class="tb-btn tb-btn--icon" type="button" title="重新建置" aria-label="重新建置" hidden><i data-tb-icon="refresh-cw"></i></button>
+            <div id="log-artifact-location" hidden></div>
           </div>
           <div id="enter-banner" class="enter-banner" hidden><span>偵測到輸入提示，建置正在等待按 Enter。</span><button id="enter-send" class="tb-btn tb-btn--primary" type="button">按 Enter 繼續</button></div>
           <div class="row log-search">
@@ -229,7 +230,7 @@
         <div id="recipe-editor" class="tb-card stack">
           <div class="editor-fields">
             <label class="tb-field"><span class="tb-field__label">已儲存的 Recipe</span><select id="edit-recipe" class="tb-select"></select></label>
-            <div class="row editor-actions"><button id="new-recipe" type="button" class="tb-btn">新建 Recipe</button><button id="copy-builtin-recipe" type="button" class="tb-btn tb-btn--primary" hidden>複製為新 Recipe</button><button id="remove-recipe" type="button" class="tb-btn" disabled>刪除 Recipe</button></div>
+            <div class="row editor-actions"><button id="new-recipe" type="button" class="tb-btn">新建 Recipe</button><button id="copy-recipe" type="button" class="tb-btn" disabled>複製為新 Recipe</button><button id="remove-recipe" type="button" class="tb-btn" disabled>刪除 Recipe</button></div>
           </div>
           <div id="builtin-recipe-preview" class="stack" hidden></div>
           <form id="recipe-form" class="stack">
@@ -273,6 +274,7 @@
             <label class="tb-field"><span class="tb-field__label">已儲存的規則組</span><select id="edit-artifact" class="tb-select"></select></label>
             <div class="row">
               <button id="new-artifact" class="tb-btn" type="button">新建規則組</button>
+              <button id="copy-artifact" class="tb-btn" type="button" disabled>複製為新規則組</button>
               <button id="load-bios-artifact-example" class="tb-btn" type="button">載入 BIOS ROM 範例</button>
               <button id="remove-artifact" class="tb-btn" type="button" disabled>刪除規則組</button>
             </div>

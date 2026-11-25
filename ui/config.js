@@ -21,6 +21,17 @@ function recordById(records, id) {
   return records.find((record) => record.id === id);
 }
 
+function copyName(source, records) {
+  const label = source.name.replace(/[^\p{L}\p{N}_ .-]/gu, "").replace(/ {2,}/g, " ").replace(/^[ .-]+/, "").trimEnd();
+  const stem = Array.from(label || "新項目");
+  const used = new Set(records.flatMap((record) => [record.id.toLowerCase(), record.name.toLowerCase()]));
+  for (let number = 1; ; number++) {
+    const suffix = number === 1 ? " 複本" : " 複本 " + number;
+    const name = stem.slice(0, 128 - suffix.length).join("").trimEnd() + suffix;
+    if (!used.has(name.toLowerCase())) return name;
+  }
+}
+
 function selectRecords(id, records, placeholder, value = $(id).value, keepMissing = false) {
   const select = $(id);
   select.replaceChildren(new Option(placeholder, ""), ...records.map((record) =>
@@ -287,10 +298,10 @@ function defaultRecipe(name = "", source = null) {
   };
 }
 
-function setRecipeDraft(record) {
+function setRecipeDraft(record, { useStockCommand = !record.id } = {}) {
   recipeDraft = { ...record, steps: (record.steps || []).map(editStep) };
   $("recipe-form").hidden = !!record.builtIn;
-  $("copy-builtin-recipe").hidden = !record.builtIn;
+  $("copy-recipe").disabled = !record.id;
   $("remove-recipe").disabled = !record.id || !!record.builtIn;
   const preview = $("builtin-recipe-preview");
   preview.hidden = !record.builtIn;
@@ -307,7 +318,7 @@ function setRecipeDraft(record) {
     );
     return;
   }
-  recipeTemplateCommand = record.id ? null : "builda.bat";
+  recipeTemplateCommand = useStockCommand ? "builda.bat" : null;
   $("recipe-name").value = record.name;
   $("recipe-timeout").value = record.timeoutMin ?? 180;
   $("recipe-env").value = JSON.stringify(record.env || {}, null, 2);
@@ -371,11 +382,13 @@ listen($("new-recipe"), "click", () => {
   setRecipeDraft(defaultRecipe());
   $("recipe-name").focus();
 });
-listen($("copy-builtin-recipe"), "click", () => {
+listen($("copy-recipe"), "click", () => {
+  const source = recordById(configuration.recipes, $("edit-recipe").value);
+  if (!source) return;
   $("edit-recipe").value = "";
-  const name = recipeDraft.name.replace(/[+()]/g, "").replace(/ {2,}/g, " ");
-  setRecipeDraft(defaultRecipe(name + " 複本", recipeDraft));
-  $("recipe-name").focus();
+  setRecipeDraft(defaultRecipe(copyName(source, configuration.recipes), structuredClone(source)),
+    { useStockCommand: !!source.builtIn });
+  $("recipe-name").select();
 });
 $("recipe-table").addEventListener("change", () => {
   const table = recordById(configuration.tables, $("recipe-table").value);
@@ -624,10 +637,11 @@ function setArtifactDraft(record) {
   artifactDraft = { ...record, rules: (record.rules || []).map(editArtifactRule) };
   $("artifact-name").value = record.name;
   $("artifact-name").disabled = !!record.builtIn;
+  $("copy-artifact").disabled = !record.id;
   $("remove-artifact").disabled = !record.id || !!record.builtIn;
   $("add-artifact-rule").disabled = !!record.builtIn;
   $("artifact-form").querySelector('button[type="submit"]').disabled = !!record.builtIn;
-  $("load-bios-artifact-example").textContent = record.builtIn ? "複製 BIOS ROM 範例" : "載入 BIOS ROM 範例";
+  $("load-bios-artifact-example").hidden = record.id === builtinBiosArtifactId;
   artifactDirty = false;
   clearArtifactPreview();
   renderArtifactRules();
@@ -661,18 +675,25 @@ function renderArtifactRules() {
       field("Build 產出資料夾（相對資料來源）", "sourceDir", { folder: "relative", anchor: () => rule.root === "repo" ? "repo" : null }),
       field("檔名或 Glob（每行一條）", "selectText", { rows: 2 }),
       field("排除 Glob（相對資料來源，每行一條）", "excludeText", { rows: 2 }),
-      field("改名範本", "rename"),
-      field("複製目的地（可絕對路徑；相對時置於資料來源下）", "dest", { folder: "absolute" }),
-      editorCheck("另外建立 ZIP", rule.zip.enabled, (value) => {
+      ...(rule.zip.enabled && rule.zip.only ? [] : [field("改名範本", "rename")]),
+      field("產出目的地（可絕對路徑；相對時置於資料來源下）", "dest", { folder: "absolute" }),
+      editorCheck("建立 ZIP", rule.zip.enabled, (value) => {
         rule.zip.enabled = value;
         markArtifactDirty();
         renderArtifactRules();
       }),
     );
-    if (rule.zip.enabled) item.append(editorInput("ZIP 檔名範本", rule.zip.file, (value) => {
-      rule.zip.file = value;
-      markArtifactDirty();
-    }));
+    if (rule.zip.enabled) item.append(
+      editorCheck("只建立 ZIP（保留子目錄）", !!rule.zip.only, (value) => {
+        rule.zip.only = value;
+        markArtifactDirty();
+        renderArtifactRules();
+      }),
+      editorInput("ZIP 檔名範本", rule.zip.file, (value) => {
+        rule.zip.file = value;
+        markArtifactDirty();
+      }),
+    );
     item.append(button("刪除規則", () => {
       artifactDraft.rules.splice(index, 1);
       markArtifactDirty();
@@ -696,14 +717,20 @@ listen($("new-artifact"), "click", () => {
   setArtifactDraft(defaultArtifact());
   $("artifact-name").focus();
 });
+function copyArtifactDraft(source) {
+  $("edit-artifact").value = "";
+  setArtifactDraft({ name: copyName(source, configuration.artifacts), rules: structuredClone(source.rules) });
+  $("artifact-name").select();
+}
+
+listen($("copy-artifact"), "click", () => {
+  const source = recordById(configuration.artifacts, $("edit-artifact").value);
+  if (source) copyArtifactDraft(source);
+});
 listen($("load-bios-artifact-example"), "click", () => {
   const example = recordById(configuration.artifacts, builtinBiosArtifactId);
   if (!example) throw new Error("找不到內建的 BIOS ROM 打包範例。");
-  // Always copy with a suffix so a user rule never shows the built-in's name.
-  const name = example.name + " 複本";
-  $("edit-artifact").value = "";
-  setArtifactDraft({ name, rules: example.rules });
-  $("artifact-name").focus();
+  copyArtifactDraft(example);
 });
 listen($("add-artifact-rule"), "click", () => {
   artifactDraft.rules.push(editArtifactRule(defaultArtifactRule()));

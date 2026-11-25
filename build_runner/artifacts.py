@@ -70,6 +70,11 @@ def normalize(config):
         archive = {"enabled": zipped.get("enabled", False)}
         if archive["enabled"]:
             archive["file"] = required_text(zipped.get("file"), "zip.file")
+            only = zipped.get("only", False)
+            if type(only) is not bool:
+                raise invalid("zip.only must be a boolean.")
+            if only:
+                archive["only"] = True
         rows.append({
             "select": select,
             "exclude": patterns(row.get("exclude", []), "exclude"),
@@ -210,6 +215,16 @@ def rule_base(rule, workspace, context):
     return base
 
 
+def selection_folder_depth(select):
+    """Number of literal folders shared by all source patterns."""
+    depth = 0
+    for parts in zip(*(pattern.split("/")[:-1] for pattern in select)):
+        if any(mark in parts[0] for mark in "*?[") or len({os.path.normcase(part) for part in parts}) != 1:
+            break
+        depth += 1
+    return depth
+
+
 def preview(workspace, config, context):
     root = Path(workspace).resolve()
     if not root.is_dir():
@@ -222,6 +237,7 @@ def preview(workspace, config, context):
     values.update({f"param.{key}": clean_variable(value) for key, value in context.get("params", {}).items()})
     plan = {"workspacePath": str(root), "files": [], "archives": []}
     reserved = set()
+    total_files = 0
     for index, rule in enumerate(config["rules"], 1):
         base = rule_base(rule, root, context)
         excludes = [tuple(pattern.split("/")) for pattern in rule["exclude"]]
@@ -232,12 +248,17 @@ def preview(workspace, config, context):
                 if any(matches(tuple(relative.split("/")), exclude) for exclude in excludes):
                     continue
                 sources[relative] = path
-                if len(plan["files"]) + len(sources) > MAX_FILES:
+                if total_files + len(sources) > MAX_FILES:
                     raise invalid(f"An artifact operation supports up to {MAX_FILES} files.")
+        total_files += len(sources)
         groups = {}
+        zip_only = rule["zip"].get("only", False)
         for relative, path in sorted(sources.items()):
             file_values = {**values, "name": clean_variable(path.stem), "ext": clean_variable(path.suffix)}
             dest = destination(base, render(rule["dest"], file_values))
+            if zip_only:
+                groups.setdefault(dest, []).append(relative)
+                continue
             target = dest / filename(render(rule["rename"], file_values))
             output = available(target, reserved)
             plan["files"].append({"id": len(plan["files"]), "rule": index, "source": relative, "base": str(base),
@@ -249,8 +270,11 @@ def preview(workspace, config, context):
                 if not archive_name.lower().endswith(".zip"):
                     raise invalid("Archive filenames must end in .zip.")
                 target = dest / archive_name
-                plan["archives"].append({"rule": index, "destination": str(available(target, reserved)),
-                                         "requested": str(target), "entries": entries})
+                archive = {"rule": index, "destination": str(available(target, reserved)),
+                           "requested": str(target), "entries": entries}
+                if zip_only:
+                    archive.update(base=str(base), sourceFolderDepth=selection_folder_depth(rule["select"]))
+                plan["archives"].append(archive)
     return plan
 
 
@@ -283,10 +307,17 @@ def copy_file(source, stream):
         shutil.copyfileobj(original, stream)
 
 
+def artifact_source(base, relative):
+    source = base / relative
+    if not source.resolve().is_relative_to(base) or not source.is_file() or not safe_entry(source):
+        raise invalid("Source no longer exists at the artifact root.")
+    return source
+
+
 def zip_files(paths, stream):
     with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED, strict_timestamps=False) as archive:
-        for path in paths:
-            archive.write(path, arcname=path.name)
+        for path, name in paths:
+            archive.write(path, arcname=name)
 
 
 def execute(plan):
@@ -295,10 +326,8 @@ def execute(plan):
     for entry in plan["files"]:
         # Older plans have no per-entry base; they were all Workspace-anchored.
         base = Path(entry.get("base", plan["workspacePath"])).resolve()
-        source = base / entry["source"]
         try:
-            if not source.resolve().is_relative_to(base) or not source.is_file() or not safe_entry(source):
-                raise invalid("Source no longer exists at the artifact root.")
+            source = artifact_source(base, entry["source"])
             actual = write_unique(Path(entry["destination"]), Path(entry["requested"]),
                                   lambda stream: copy_file(source, stream))
             copied[entry["id"]] = actual
@@ -306,10 +335,16 @@ def execute(plan):
         except (OSError, ToolError) as exc:
             result["errors"].append({"source": entry["source"], "message": str(exc)})
     for entry in plan["archives"]:
-        paths = [copied[index] for index in entry["entries"] if index in copied]
-        if not paths:
-            continue
         try:
+            if "sourceFolderDepth" in entry:
+                base = Path(entry["base"]).resolve()
+                depth = entry["sourceFolderDepth"]
+                paths = [(artifact_source(base, relative), "/".join(relative.split("/")[depth:]))
+                         for relative in entry["entries"]]
+            else:
+                paths = [(copied[index], copied[index].name) for index in entry["entries"] if index in copied]
+            if not paths:
+                continue
             actual = write_unique(Path(entry["destination"]), Path(entry["requested"]),
                                   lambda stream: zip_files(paths, stream))
             result["archives"].append({"destination": str(actual), "count": len(paths)})

@@ -191,6 +191,27 @@ function artifactSummary(row) {
   return detail;
 }
 
+function artifactLocation(row) {
+  if (row?.state !== "success") return null;
+  const folders = new Map();
+  for (const [index, file] of (row.artifacts || []).entries()) {
+    const end = Math.max(file.lastIndexOf("/"), file.lastIndexOf("\\"));
+    if (end < 0) continue;
+    const folder = file.slice(0, end + 1);
+    const key = folder.replaceAll("\\", "/").toLowerCase();
+    if (!folders.has(key)) folders.set(key, { folder, index });
+  }
+  if (!folders.size) return null;
+  const select = element("select", "tb-select");
+  select.setAttribute("aria-label", "產出物資料夾");
+  for (const { folder, index } of folders.values()) select.add(new Option(folder, index));
+  const control = element("div", "row artifact-location");
+  if (folders.size > 1) control.append(select);
+  control.append(button("開啟產出物位置", () =>
+    api("/jobs/" + row.id + "/open", "POST", { index: Number(select.value) })));
+  return control;
+}
+
 function duration(seconds) {
   const elapsed = Math.max(0, Math.floor(seconds));
   return elapsed >= 60 ? Math.floor(elapsed / 60) + " 分 " + elapsed % 60 + " 秒" : elapsed + " 秒";
@@ -225,6 +246,15 @@ function updateLogJobControls() {
   stop.hidden = !active;
   $("log-restart-job").hidden = !canRestartJob(job);
   stop.disabled = $("log-restart-job").disabled = !!pending;
+  const location = $("log-artifact-location");
+  const jobId = job?.state === "success" ? job.id : "";
+  if (location.dataset.jobId !== jobId) {
+    const control = artifactLocation(job);
+    location.replaceChildren();
+    if (control) location.append(control);
+    location.hidden = !control;
+    location.dataset.jobId = jobId;
+  }
 }
 
 async function controlJob(row, action) {
@@ -293,6 +323,8 @@ function jobCard(row) {
   if (row.historyError) card.append(element("p", "preview-warning", "歷史紀錄寫入失敗。"));
   const outputs = artifactSummary(row);
   if (outputs) card.append(outputs);
+  const location = artifactLocation(row);
+  if (location) card.append(location);
   card.append(foot);
   return card;
 }

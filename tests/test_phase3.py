@@ -6,10 +6,12 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 import zipfile
 
-from build_runner import artifacts, paramsets
+from build_runner import artifacts, jobs, paramsets
 from build_runner.paths import ToolError
+from build_runner.web_api import Api, HttpError
 
 
 class ParameterTests(unittest.TestCase):
@@ -79,6 +81,50 @@ class ParameterTests(unittest.TestCase):
 
 
 class ArtifactTests(unittest.TestCase):
+    def test_zip_only_preserves_subfolders_without_loose_copies(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "Build" / "Images"
+            (source / "nested").mkdir(parents=True)
+            (source / "image.bin").write_bytes(b"root image")
+            (source / "nested" / "image.bin").write_bytes(b"nested image")
+            config = artifacts.normalize({"name": "Images", "rules": [{
+                "select": ["Build/Images/**"], "dest": "Artifacts/{recipe}",
+                "zip": {"enabled": True, "file": "Images.zip", "only": True},
+            }]})
+            plan = artifacts.preview(root, config, {"recipe": "Example"})
+            self.assertEqual(plan["files"], [])
+            result = artifacts.execute(plan)
+            self.assertEqual(result["errors"], [])
+            dest = root / "Artifacts" / "Example"
+            self.assertEqual([path.name for path in dest.iterdir()], ["Images.zip"])
+            with zipfile.ZipFile(dest / "Images.zip") as archive:
+                self.assertEqual(set(archive.namelist()), {"image.bin", "nested/image.bin"})
+                self.assertEqual(archive.read("nested/image.bin"), b"nested image")
+
+    def test_open_artifact_location_uses_the_selected_recorded_output(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            first = root / "Archives"
+            second = root / "Selected Files"
+            first.mkdir()
+            second.mkdir()
+            job_id = "f" * 32
+            row = {"id": job_id, "state": "success", "artifacts": [
+                str(first / "output.zip"), str(second / "image.bin"),
+            ]}
+            jobs.save(root, row)
+            api = Api(root, {}, None)
+            route = f"/api/jobs/{job_id}/open"
+            with patch("build_runner.web_api.os.startfile", create=True) as open_folder:
+                self.assertEqual(api.route("POST", route, {}, {"index": 1})[0], 200)
+                open_folder.assert_called_once_with(str(second), "explore")
+                for index in (-1, 2, True, None):
+                    with self.subTest(index=index), self.assertRaises(HttpError) as raised:
+                        api.route("POST", route, {}, {"index": index})
+                    self.assertEqual(raised.exception.status, 400)
+                open_folder.assert_called_once()
+
     def test_preview_and_execute_copy_and_zip_without_overwriting(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp) / "workspace"

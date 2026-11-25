@@ -796,6 +796,22 @@ class Api:
             confirm(body)
             row, warnings = jobs.restart(self.data, job_id)
             return ok(row, 201, warnings=warnings)
+        if method == "POST" and action == "open":
+            outputs = row.get("artifacts") or []
+            index = body.get("index")
+            if row["state"] != "success" or type(index) is not int or not 0 <= index < len(outputs):
+                raise HttpError(400, "INVALID_ARTIFACT_LOCATION", "請選擇成功建置的產出物位置。")
+            artifact = Path(outputs[index])
+            folder = artifact.parent
+            if not artifact.is_absolute() or not folder.is_dir():
+                raise HttpError(404, "ARTIFACT_LOCATION_NOT_FOUND", "產出物資料夾已不存在。")
+            if not hasattr(os, "startfile"):
+                raise HttpError(501, "ARTIFACT_LOCATION_UNSUPPORTED", "此環境無法開啟 Windows 檔案總管。")
+            try:
+                os.startfile(str(folder), "explore")
+            except OSError as exc:
+                raise HttpError(500, "ARTIFACT_LOCATION_OPEN_FAILED", f"無法開啟產出物資料夾：{exc}") from exc
+            return ok({"opened": True})
         if method == "POST" and action == "enter":
             if row["state"] != "running":
                 raise HttpError(409, "JOB_NOT_RUNNING", "Job 不是執行中，無法送 Enter。")
