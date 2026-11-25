@@ -2,32 +2,29 @@
 
 ## [Unreleased]
 
-- Branch／Commit 左側使用較窄的 ref 資料夾樹，分支清單與搜尋結果集中在右側表格。
-- 修正長 Commit 標題把 Build 表單與佇列撐出欄位的問題。
-- 選定建置目標後才顯示 Checkout 選項，並簡化 Submodule update 標籤。
-- 縮小 Branch／Commit 視窗的分支樹、表格及 Commit 清單字級，統一 Build 頁和視窗內佇列的文字與按鈕字級。
-- Build 頁可單次切換或停用產出物規則，也能把選擇的規則另存到新 Recipe。
-- 指令預覽下方會顯示選用的產出物規則，包括檔案樣式、目的地及 ZIP 設定。
-- 已儲存的 Recipe 與產出物規則組可以複製成新草稿，調整後另存。
-- 產出物規則可選擇只建立 ZIP，並保留來源子目錄。
-- 成功建置且有產出物時，可從總覽或 Log 頁在檔案總管開啟產出資料夾。若有多個位置，可先選擇要開啟的資料夾。
+## [0.6.0] - 2026-11-26
 
-## [0.6.0] - 2026-11-17
+### 建置流程與 Git
 
-### 新功能
+- **建置前 Checkout**：Build 頁可指定本機分支、遠端分支或 Commit SHA。選定目標後可設定 Submodule update、先 fetch origin 或強制切樹。留空則建置工作區目前的修訂。
+- **分支與 Commit 佇列**：依 ref 資料夾瀏覽分支，或用名稱、作者、SHA、Commit 訊息搜尋。可勾選多個分支或 Commit，調整順序後依序建置。縮小選擇視窗與佇列的字級，修正長 Commit 標題把欄位撐開的問題。
+- **同一資料夾依序建置**：同一 Workspace 資料夾的工作依排隊順序執行。指定 Checkout 目標時，也會與同一 Git repo 的其他 worktree 工作錯開。不同 repo 的工作可依併發上限平行執行。
+- **選用強制切樹**：勾選時會要求確認。執行後會丟棄已追蹤檔案的未提交變更。選到遠端分支且本機已有同名分支時，會將該本機分支重設為對應的遠端追蹤分支。
+- **Workspace 建置短路徑**：可填入自訂路徑，或一鍵使用依 Workspace 產生的建議位置。建置時會建立或重用 Windows 目錄 junction，縮短建置工具使用的工作路徑。
+- **簡化 Workspace 卡片**：移除「重新整理 Git」、「Pull ff-only」與切換分支操作。卡片會顯示本機 Git 狀態，建置目標在 Build 頁設定。
 
-- **建置前 Checkout**：Build 頁可填「Build 目標」（branch、remote branch 或 commit SHA），Runner 會先切到該修訂再建置，預設一併執行 `git submodule update --init --recursive`（可取消勾選），並可選擇先 `git fetch origin --prune`。留空則直接在目前位置建置。目標找不到或工作區為髒樹時，Job 在 Checkout 步驟失敗，不會建置到錯誤的修訂。
-- **強制切樹（選配）**：Build 頁新增「強制切樹」勾選，勾選時先跳確認框（取消即反勾）；確認後 Runner 改用 `git switch -f` 切換，工作區未提交的追蹤檔案變更會被丟棄（untracked 檔案保留）。適用於髒樹也要照指定修訂建置的情境；Build 預覽會標註「強制：未提交變更將被丟棄」。選「遠端分支」且本機已有同名分支時：未勾強制會以清楚的中文訊息失敗（不靜默沿用可能落後的本機分支），勾了強制則以 `git switch -C -f` 把本機分支重置到遠端最新（本機多出的 commit 可經 reflog 找回）。
-- **同 Workspace 排隊建置**：同一資料夾已有 Job 在執行或排隊時，新 Job（不論有沒有自帶 Build 目標）不再被視為衝突拒絕，而是自動排在後面；調度器保證同一資料夾一次只跑一個 Job、依排隊順序執行，即使併發上限還有空間也不例外。不同 Workspace（不同資料夾）仍可比照併發上限平行建置；帶 Build 目標的 Job 额外与同一 Git repo 其他 worktree 的 Job 序列化，避免切樹互搶。
-- Workspace 卡的切換框與 Build 目標採同一套解析規則：完整 ref、顯示名稱（如 `main`、`origin/main`）與 commit SHA（4–40 位十六進位）皆可，local 與 remote 同名時以 local 優先。
-- Build 預覽、Job 卡片與建置 log 會顯示 checkout 目標與執行進度。
-- 「選擇 Branch／Commit…」（仿 TortoiseGit 選 log 對話框）：左側多層樹依分支名的 `/` 逐層分組（heads／remotes／各 remote 預設展開，群組與葉分支混排、可逐層收合），右側分支表格（Branch Name、Date Last Commit、Last Author Date、Last Commit），上方 Filter 可依名稱、作者、SHA、commit 訊息即時過濾（樹同步縮減）；點分支列可看該分支最新 100 筆 commits。可勾選多個 branch／commit 排成 Build 佇列，逐筆用 ↑↓ 調整順序或移除（手動編輯 Build 目標欄會先確認才清佇列）；送出後依順序對每個目標各建一個 Job，同一 Workspace 依序 checkout＋建置。樹與表格字級加大，branch 清單日期改用不受中文語系影響的格式。
-- **本機服務探索（listener.json）**：Web 服務啟動後把實際 URL／port／pid／開始時間寫進資料目錄的 `listener.json`（正常關閉時清除，跨程序殘留以 `/api/health` 探活為準），讓其他本機工具（如 Culprit 的「送到 Build-Runner 佇列」）不用猜 port 就能找到服務。
+### 產出物與 Recipe
 
-### 修正
+- Build 頁可直接選擇或停用本次建置的產出物規則，也可以將選擇另存為新 Recipe。指令預覽下方會列出檔案比對樣式、目的地與 ZIP 設定。
+- 產出物規則可複製檔案、複製檔案並建立 ZIP，或只建立 ZIP 並保留來源子目錄。
+- 成功建置並取得產出物後，可從總覽或 Log 開啟產出目錄。若有多個位置，可以先選擇要開啟的目錄。
+- 已儲存的 Recipe 與產出物規則組可複製後另存，方便沿用現有設定。
 
-- 建置、衝突檢查、Recipe、參數表與 Workspace 的錯誤訊息改為正體中文。
-- 由 Hub 啟動時，自動檢查更新不再回傳 403，瀏覽器主控台不再出現錯誤訊息。
+### 整合與修正
+
+- Web 服務啟動時會在資料目錄寫入 `listener.json`，供其他本機工具查詢實際位址與連接埠。
+- 建置、衝突檢查、Recipe、參數表與 Workspace 的錯誤訊息改為台灣正體中文。
+- 修正由 Hub 啟動時自動檢查更新收到 403 的問題。
 
 ## [0.5.4] - 2026-11-15
 

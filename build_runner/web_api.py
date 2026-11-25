@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from uuid import uuid4
 
-from . import ai, artifacts, history, jobs, logtools, packs, paramsets, recipes, schedule, workspaces
+from . import ai, artifacts, history, jobs, junctions, logtools, packs, paramsets, recipes, schedule, workspaces
 from .paths import ToolError, config_records, file_lock, named_file, save_config, write_json
 
 
@@ -415,10 +415,11 @@ class Api:
             # Keep the list fast: "git status" is slow on huge trees and the
             # page fills the dirty badge afterwards via /workspaces/dirty.
             return ok([{**row, **workspaces.git_state(row["path"], include_dirty=False),
-                        "lastResult": last.get(row["id"])}
+                        "lastResult": last.get(row["id"]), "suggestedShortPath": junctions.suggest_short_path(row)}
                        for row in workspaces.list_workspaces(self.data)])
         if method == "POST" and "id" not in body:
-            return ok(workspaces.add_workspace(self.data, string(body, "name"), string(body, "path")), 201)
+            return ok(workspaces.add_workspace(self.data, string(body, "name"), string(body, "path"),
+                                               short_path=body.get("shortPath")), 201)
         workspace_id = string(body, "id")
         if method == "DELETE":
             confirm(body)
@@ -428,10 +429,17 @@ class Api:
             if not row:
                 raise HttpError(404, "WORKSPACE_NOT_FOUND", "找不到指定的 Workspace。")
             if method == "POST":
-                name = string(body, "name")
-                if any(other is not row and other["name"].casefold() == name.casefold() for other in current):
-                    raise HttpError(409, "WORKSPACE_EXISTS", "此 Workspace 名稱已存在。")
-                row["name"] = name
+                if "name" in body or "shortPath" not in body:
+                    name = string(body, "name")
+                    if any(other is not row and other["name"].casefold() == name.casefold() for other in current):
+                        raise HttpError(409, "WORKSPACE_EXISTS", "此 Workspace 名稱已存在。")
+                    row["name"] = name
+                if "shortPath" in body:
+                    short_path = junctions.normalize_short_path(body["shortPath"])
+                    if short_path:
+                        row["shortPath"] = short_path
+                    else:
+                        row.pop("shortPath", None)
             else:
                 current.remove(row)
             write_json(self.data / "workspaces.json", current)

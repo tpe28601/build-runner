@@ -229,6 +229,8 @@ def job_plan(workspace, recipe, recipe_name, preset, table, overrides, artifact_
         "checkoutTarget": (checkout or {}).get("target"),
         "params": plan["params"],
     }
+    if workspace.get("shortPath"):
+        plan["shortPath"] = preview["shortPath"] = workspace["shortPath"]
     return preview, plan
 
 
@@ -467,6 +469,8 @@ def restart(data, job_id):
                 "workspace", "workspaceId", "workspacePath", "recipe", "argvPreview",
                 "params", "checkoutTarget",
             )}
+            if plan.get("shortPath"):
+                preview["shortPath"] = plan["shortPath"]
             preview.update(branch=git["branch"], commit=git["commit"], gitCommonDir=git_common,
                            restartedFrom=job_id)
             replacement = create_queued_job(data, preview, plan, pending=True)

@@ -73,6 +73,7 @@
               <h2>新增 Workspace</h2>
               <label class="tb-field"><span class="tb-field__label">名稱</span><input name="name" class="tb-input" required placeholder="PlatformA"></label>
               <label class="tb-field"><span class="tb-field__label">資料夾路徑</span><span class="tb-input-row"><input id="workspace-path" name="path" class="tb-input tb-input--mono" required placeholder="C:\src\sample"><button type="button" class="tb-btn tb-btn--icon" data-folder-target="workspace-path" aria-label="瀏覽 Workspace 資料夾" title="瀏覽資料夾"><i data-tb-icon="folder-open"></i></button></span></label>
+              <label class="tb-field"><span class="tb-field__label">建置短路徑（選填）</span><input name="shortPath" class="tb-input tb-input--mono" placeholder="C:\A"></label>
               <button class="tb-btn tb-btn--primary" type="submit"><i data-tb-icon="plus"></i>新增</button>
             </form>
             <form id="worktree-import" class="tb-card stack">
@@ -382,6 +383,22 @@
     <div id="page-help-content" class="page-help__body"></div>
     <form id="page-help-actions" method="dialog" class="tb-dialog__actions page-help__foot">
       <button class="tb-btn tb-btn--primary" type="submit" autofocus>了解</button>
+    </form>
+  </dialog>
+  <dialog id="workspace-short-path-dialog" class="tb-dialog" aria-labelledby="workspace-short-path-title">
+    <form id="workspace-short-path-form" class="stack">
+      <h2 id="workspace-short-path-title" class="tb-dialog__title">建置短路徑</h2>
+      <label class="tb-field"><span class="tb-field__label">本機短路徑（選填）</span><input id="workspace-short-path" class="tb-input tb-input--mono" placeholder="C:\A"></label>
+      <div id="workspace-short-path-suggestion" class="row" hidden>
+        <button id="use-suggested-short-path" type="button" class="tb-btn">使用建議路徑</button>
+        <code id="workspace-suggested-short-path"></code>
+      </div>
+      <p class="tb-small tb-muted">Git 專案會連到工作樹根目錄，其他資料夾會連到 Workspace。留空使用原本路徑。</p>
+      <p id="workspace-short-path-error" class="preview-warning" role="alert" hidden></p>
+      <div class="tb-dialog__actions">
+        <button id="cancel-workspace-short-path" type="button" class="tb-btn">取消</button>
+        <button type="submit" class="tb-btn tb-btn--primary">儲存</button>
+      </div>
     </form>
   </dialog>
   <dialog id="build-save-recipe" class="tb-dialog" aria-labelledby="build-save-recipe-title">

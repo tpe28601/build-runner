@@ -79,7 +79,7 @@ legend { margin-bottom: 8px; }
 .workspace-card:has(.ws-choice input:checked) { border-color: var(--tb-accent); background: var(--tb-accent-soft); }
 .build-workspace-card:has(input:focus-visible),
 .workspace-card:has(.ws-choice input:focus-visible) { box-shadow: var(--tb-focus); }
-.workspace-path, .job-title, .git-meta, .branch-label { overflow-wrap: anywhere; }
+.workspace-path, .job-title, .git-meta { overflow-wrap: anywhere; }
 .triage, .preview-warning {
   margin: 0;
   border: 1px solid var(--tb-border); border-radius: var(--tb-radius-lg); overflow-wrap: anywhere;
@@ -174,29 +174,6 @@ input[type="file"] { min-width: 0; max-width: 100%; }
 .page-help__body ul { margin: 0; padding-inline-start: 20px; }
 .page-help__body li { margin: 6px 0; line-height: 1.65; overflow-wrap: anywhere; }
 .page-help__foot { margin-top: 0; border-top: 1px solid var(--tb-border); }
-/* 切換分支：自製下拉清單（取代原生 datalist 的深色泡泡），外觀比照 select 選單 */
-.branch-combo { position: relative; }
-.branch-combo .branch-input { width: 100%; padding-right: 34px; }
-.branch-toggle {
-  position: absolute; top: 0; right: 0; bottom: 0; width: 32px; display: grid; place-items: center;
-  border: 0; background: transparent; color: var(--tb-muted); cursor: pointer;
-}
-.branch-toggle:hover { color: var(--tb-text); }
-.branch-menu {
-  position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 2px); margin: 0; padding: 2px 0; list-style: none;
-  max-height: 280px; overflow-y: auto; overscroll-behavior: contain;
-  background: var(--tb-surface); color: var(--tb-text); border: 1px solid var(--tb-border);
-  border-radius: var(--tb-radius); box-shadow: var(--tb-shadow);
-}
-.branch-option {
-  padding: 6px 12px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  font-family: var(--tb-font-mono, ui-monospace, Consolas, monospace); font-size: var(--tb-fs-sm, 0.875rem);
-}
-.branch-option[aria-selected="true"] { background: var(--tb-accent-soft); color: var(--tb-accent); }
-.branch-option--empty { cursor: default; color: var(--tb-muted); font-family: inherit; }
-.branch-option.is-current { font-weight: 600; }
-.branch-option.is-current::after { content: "（目前）"; font-weight: 400; color: var(--tb-muted); font-family: var(--tb-font, inherit); }
-.branch-group { padding: 6px 12px 2px; font-size: var(--tb-fs-xs, 0.75rem); font-weight: 600; color: var(--tb-muted); cursor: default; }
 /* 流程設定 → 參數表：唯讀參數清單 */
 .param-browser { border-top: 1px solid var(--tb-border); padding-top: 12px; }
 .param-browser h3 { margin: 0; }

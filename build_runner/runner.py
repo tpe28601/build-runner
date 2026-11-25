@@ -4,10 +4,11 @@ import argparse
 import ctypes
 from ctypes import wintypes
 import os
+from pathlib import Path
 import subprocess
 import time
 
-from . import artifacts, console, jobs, logtools, prompts, recipes, workspaces
+from . import artifacts, console, jobs, junctions, logtools, prompts, recipes, workspaces
 from .paths import data_dir, read_json
 
 
@@ -266,10 +267,23 @@ def run(data, job_id):
     failure = None
     message = None
     contained = False
+    alias = None
     auto_skip = jobs.auto_skip_prompts(data)
     try:
         contain_process_tree()
         contained = True
+        if plan.get("shortPath"):
+            row["step"] = "短路徑"
+            with jobs.lock(data):
+                jobs.save(data, row)
+            workspace_path = Path(plan["workspacePath"])
+            target = Path(workspaces.repo_root(workspace_path) or workspace_path).resolve()
+            if not workspace_path.is_relative_to(target):
+                raise jobs.ToolError("INVALID_SHORT_PATH", "Workspace 不在 junction 的目標資料夾內。")
+            alias = junctions.ensure_short_path(plan["shortPath"], target)
+            with log_path.open("ab", buffering=0) as log:
+                log.write(f"[Build Runner] 建置短路徑：{alias / workspace_path.relative_to(target)}\n".encode("utf-8"))
+            deadline = time.monotonic() + plan["timeoutSec"]
         checkout = plan.get("checkout") or {}
         if checkout.get("target"):
             # Build the requested revision, not wherever the tree happens to be.
@@ -292,6 +306,8 @@ def run(data, job_id):
         with log_path.open("ab", buffering=0) as log:
             forwarder = EnterForwarder(log, log_path, folder / "enter.request", auto_skip=auto_skip)
             for step in plan["steps"]:
+                if alias is not None:
+                    step = junctions.shorten_step(step, target, alias)
                 command, executable, step_env = recipes.launch_args(step, env)
                 with jobs.lock(data):
                     row["step"] = step["name"]

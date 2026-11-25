@@ -9,7 +9,7 @@ const pageHelp = {
   workspaces: ["Workspace", [
     "輸入名稱與資料夾路徑，或按資料夾圖示瀏覽本機磁碟。",
     "要匯入 Git worktree，先選 Repo，再勾選要登錄的資料夾。",
-    "勾選 Workspace 後可前往 Build。重新整理 Git 可查看分支和變更。",
+    "Workspace 卡片會顯示本機 Git 狀態。勾選 Workspace 後可前往 Build 選擇建置分支。",
   ]],
   build: ["Build", [
     "選取一個或多個 Workspace，再選 Recipe。",

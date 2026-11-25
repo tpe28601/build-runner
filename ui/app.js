@@ -12,7 +12,7 @@ const tones = { queued: "warn", running: "accent", success: "ok", failed: "dange
 // 與後端 build_runner/prompts.py 相同的提示偵測（账号/密码/passphrase 等待輸入）
 const PROMPT_PATTERN = /\benter (?:your username|password for|passphrase for)\b/i;
 const selected = new Set();
-const gitDetails = new Map();
+const buildBranchRefs = new Map();
 const pendingJobActions = new Set();
 let page;
 let navigation = 0;
@@ -371,7 +371,10 @@ function workspaceChoice(row, prefix, classes = "check") {
     if (box.checked) selected.add(row.id);
     else selected.delete(row.id);
     buildChecked = "";
-    if (page === "build") renderBuildPreview();
+    if (page === "build") {
+      renderBuildTargetOptions();
+      renderBuildPreview();
+    }
     if (page === "workspaces") $("workspace-build").disabled = !selected.size;
   });
   label.append(box, element("span", "", row.name));
@@ -422,6 +425,16 @@ function renderWorkspaces() {
 const gitOperationLabels = {revert: "Revert 進行中", "cherry-pick": "Cherry-pick 進行中", merge: "Merge 進行中",
                             rebase: "Rebase 進行中", bisect: "Bisect 進行中"};
 
+function editWorkspaceShortPath(row) {
+  $("workspace-short-path-form").dataset.workspaceId = row.id;
+  $("workspace-short-path").value = row.shortPath || "";
+  $("workspace-suggested-short-path").textContent = row.suggestedShortPath || "";
+  $("workspace-short-path-suggestion").hidden = !row.suggestedShortPath;
+  $("workspace-short-path-error").hidden = true;
+  $("workspace-short-path-dialog").showModal();
+  $("workspace-short-path").select();
+}
+
 function workspaceCard(row) {
   const card = element("article", "tb-card tb-card--hover stack workspace-card");
   const head = element("div", "row");
@@ -436,15 +449,18 @@ function workspaceCard(row) {
     checkbox.click();
   });
   card.append(head, element("p", "tb-mono workspace-path", row.path));
+  if (row.shortPath) card.append(element("p", "tb-small tb-muted workspace-path", "建置短路徑 · " + row.shortPath));
   const dirtyLabel = row.dirty === null || row.dirty === undefined ? "" : row.dirty ? "有未提交變更" : "工作樹乾淨";
   const metadata = row.gitCommonDir ?
     [row.branch || "detached HEAD", row.commit, row.subject, dirtyLabel].filter(Boolean).join(" · ") :
     "非 Git 資料夾";
   card.append(element("p", "git-meta tb-muted", metadata));
   const actions = element("div", "row");
-  actions.append(button("重新整理 Git", () => runGit(row, "refresh")));
-  if (row.gitCommonDir) actions.append(button("Pull ff-only", () => runGit(row, "pull")));
+  const shortPath = button("短路徑設定", () => editWorkspaceShortPath(row));
+  shortPath.setAttribute("aria-haspopup", "dialog");
+  shortPath.setAttribute("aria-controls", "workspace-short-path-dialog");
   actions.append(
+    shortPath,
     button("改名", async () => {
       const name = window.prompt("Workspace 名稱", row.name)?.trim();
       if (!name || name === row.name) return;
@@ -458,185 +474,7 @@ function workspaceCard(row) {
     }),
   );
   card.append(actions);
-  const branches = gitDetails.get(row.id);
-  if (branches?.length) {
-    // 分支動輒上百條且名稱很長：輸入關鍵字過濾。原生 datalist 在 Chromium 會畫成深色
-    // 泡泡、只列符合目前值的一筆，改用自製下拉清單（外觀同 select 選單）。
-    // 候選顯示去 ref 前綴的短名；送回前再解析回完整 ref。
-    const label = element("div", "tb-field branch-field");
-    const input = element("input", "tb-input tb-input--mono branch-input");
-    input.placeholder = "搜尋 local／remote branch，或貼上 commit SHA";
-    input.autocomplete = "off";
-    input.spellcheck = false;
-    const list = element("ul", "branch-menu");
-    list.id = "branch-list-" + row.id;
-    list.setAttribute("role", "listbox");
-    list.hidden = true;
-    input.setAttribute("role", "combobox");
-    input.setAttribute("aria-controls", list.id);
-    input.setAttribute("aria-expanded", "false");
-    input.setAttribute("aria-autocomplete", "list");
-    const toggle = element("button", "branch-toggle");
-    toggle.type = "button";
-    toggle.tabIndex = -1;
-    toggle.setAttribute("aria-label", "顯示全部分支");
-    toggle.innerHTML = TbIcons.svg("chevron-down");
-    const byDisplay = new Map();   // 短名 -> 完整 ref 清單（local／remote 可能同名）
-    const displays = [];
-    const groupOf = new Map();     // 短名 -> 「本地」或「遠端」（同名時以本地為準）
-    for (const branch of branches) {
-      const display = branch.replace(/^refs\/(?:heads|remotes)\//, "");
-      if (!byDisplay.has(display)) { byDisplay.set(display, []); displays.push(display); }
-      byDisplay.get(display).push(branch);
-      if (branch.startsWith("refs/heads/") || !groupOf.has(display)) {
-        groupOf.set(display, branch.startsWith("refs/heads/") ? "本地" : "遠端");
-      }
-    }
-    displays.sort((a, b) => (groupOf.get(a) === "本地" ? 0 : 1) - (groupOf.get(b) === "本地" ? 0 : 1));
-    if (row.branch && byDisplay.has(row.branch)) input.value = row.branch;   // 預設顯示目前分支
-    let active = -1;
-    const items = () => [...list.children].filter((node) => node.dataset.value !== undefined);
-    const highlight = (index) => {
-      const rows = items();
-      active = rows.length ? (index + rows.length) % rows.length : -1;
-      rows.forEach((node, i) => node.setAttribute("aria-selected", String(i === active)));
-      if (active >= 0) { rows[active].scrollIntoView({ block: "nearest" }); input.setAttribute("aria-activedescendant", rows[active].id); }
-      else input.removeAttribute("aria-activedescendant");
-    };
-    const closeMenu = () => {
-      list.hidden = true;
-      input.setAttribute("aria-expanded", "false");
-      input.removeAttribute("aria-activedescendant");
-      active = -1;
-    };
-    const openMenu = (showAll = false) => {
-      const query = showAll ? "" : input.value.trim().toLowerCase();
-      const matches = query ? displays.filter((name) => name.toLowerCase().includes(query)) : displays;
-      list.replaceChildren();
-      let group = "";
-      matches.slice(0, 300).forEach((name, i) => {
-        if (groupOf.get(name) !== group) {
-          group = groupOf.get(name);
-          const heading = element("li", "branch-group", group);
-          heading.setAttribute("role", "presentation");
-          list.append(heading);
-        }
-        const option = element("li", "branch-option" + (name === row.branch ? " is-current" : ""), name);
-        option.id = list.id + "-" + i;
-        option.dataset.value = name;
-        option.setAttribute("role", "option");
-        option.addEventListener("mousedown", (event) => {   // mousedown：搶在 input blur 之前
-          event.preventDefault();
-          input.value = name;
-          closeMenu();
-        });
-        option.addEventListener("mousemove", () => { if (active !== i) highlight(i); });
-        list.append(option);
-      });
-      if (!matches.length) list.append(element("li", "branch-option branch-option--empty", "沒有符合的分支"));
-      else if (matches.length > 300) list.append(element("li", "branch-option branch-option--empty", "還有 " + (matches.length - 300) + " 筆，請輸入更多關鍵字"));
-      list.hidden = false;
-      input.setAttribute("aria-expanded", "true");
-      highlight(matches.indexOf(input.value.trim()));
-    };
-    input.addEventListener("input", () => openMenu());
-    input.addEventListener("focus", () => openMenu(true));
-    input.addEventListener("click", () => { if (list.hidden) openMenu(true); });
-    input.addEventListener("blur", closeMenu);
-    toggle.addEventListener("mousedown", (event) => {
-      event.preventDefault();
-      if (list.hidden) { input.focus(); openMenu(true); } else closeMenu();
-    });
-    input.addEventListener("keydown", (event) => {
-      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-        event.preventDefault();
-        if (list.hidden) openMenu(true);
-        highlight(active + (event.key === "ArrowDown" ? 1 : -1));
-      } else if (event.key === "Escape" && !list.hidden) {
-        event.preventDefault();
-        closeMenu();
-      }
-    });
-    const resolveBranch = () => {
-      const v = input.value.trim();
-      if (!v) throw new Error("請輸入或選擇分支。");
-      if (branches.includes(v)) return v;                       // 完整 ref（如自訂輸入）
-      const hits = byDisplay.get(v);
-      if (hits) return hits.find((b) => b.startsWith("refs/heads/")) || hits[0];   // 同名優先 local
-      if (/^[0-9a-fA-F]{4,40}$/.test(v)) return v;               // commit SHA：由後端驗證能否檢出（detach）
-      throw new Error("分支「" + v + "」不在清單中，也不是 commit SHA；請先「重新整理 Git」。");
-    };
-    const control = element("div", "branch-combo");
-    control.append(input, toggle, list);
-    label.append(element("span", "tb-field__label branch-label", "切換分支"), control);
-    // 強制切換＝git checkout -f：丟棄未提交的追蹤檔案變更、取消進行中的 revert/
-    // cherry-pick/merge（untracked 檔保留）。Git 的 sequencer 擋鎖只有這條路過得去。
-    const forceBox = element("input");
-    forceBox.type = "checkbox";
-    const forceLabel = element("label", "check");
-    forceLabel.append(forceBox, element("span", "", "強制（丟棄未提交變更，取消進行中的操作）"));
-    const switchBtn = button("切換", async () => {
-      let ref;
-      try { ref = resolveBranch(); } catch (error) { announce(error.message, true); return; }
-      const status = await runGit(row, "checkout", ref, false, forceBox.checked);
-      if (!status) return;
-      // 切分支後 Submodule 常停留在舊 commit：主動詢問是否更新（使用者選擇，不預設跑）。
-      // hasSubmodules===false 表示查過沒有子模組，不必打擾；查不到（undefined）仍詢問。
-      if (status.hasSubmodules !== false &&
-          window.confirm("分支已切換。是否更新 Submodule（git submodule update --init --recursive）？")) {
-        await runGit(row, "submodule", null, true);   // 上面的詢問就是確認，不再重複 confirm
-      }
-    });
-    // Enter：清單開著且有高亮項時先選取它，再觸發切換；isComposing 過濾中文輸入法組字 Enter。
-    listen(input, "keydown", (event) => {
-      if (event.key !== "Enter" || event.isComposing) return;
-      event.preventDefault();
-      const picked = !list.hidden && active >= 0 ? items()[active]?.dataset.value : null;
-      if (picked) input.value = picked;
-      closeMenu();
-      switchBtn.click();
-    });
-    card.append(label, forceLabel, switchBtn);
-  } else if (row.gitCommonDir) {
-    card.append(element("p", "tb-field__hint", "重新整理 Git 可列出可切換的分支。"));
-  }
   return card;
-}
-
-async function runGit(row, action, branch, preConfirmed = false, force = false) {
-  const label = action === "pull" ? "Pull ff-only" : action === "submodule" ? "Submodule update" : "切換分支";
-  if (!preConfirmed && action !== "refresh") {
-    let question = "對「" + row.name + "」執行 " + label + "？";
-    if (action === "checkout" && force) {
-      question = "強制切換「" + row.name + "」：未提交的追蹤檔案變更將永久丟棄，進行中的 revert／cherry-pick／rebase 會被取消（untracked 檔保留）。確定？";
-    } else if (action === "checkout" && row.gitOperation) {
-      // sequencer 狀態（revert/cherry-pick/rebase）Git 必然拒絕切換；bisect 或
-      // 衝突已解完的 merge 則可能直接成功，語氣分開避免誤導。
-      const blocking = ["revert", "cherry-pick", "rebase"].includes(row.gitOperation);
-      question += "（偵測到" + (gitOperationLabels[row.gitOperation] || row.gitOperation) +
-                  (blocking ? "，不勾強制會被 Git 擋下" : "，Git 可能拒絕切換") +
-                  "；建議先在終端機結束該操作以保留變更，或勾選「強制」。）";
-    }
-    if (!window.confirm(question)) return false;
-  }
-  announce("Git 工作處理中…", false, true);
-  try {
-    const { result } = await api("/workspaces/" + row.id + "/git", "POST",
-                                 { action, branch, confirm: action !== "refresh", force });
-    let status = result;
-    while (status.state === "running") {
-      await new Promise((resolve) => setTimeout(resolve, 350));
-      status = (await api("/git-tasks/" + status.id)).result;
-    }
-    if (status.state !== "success") throw new Error(status.error?.message || "Git 工作失敗。");
-    gitDetails.set(row.id, status.branches);
-    await refreshWorkspaces();
-    announce("Git 狀態已更新。");
-    return status;
-  } catch (error) {
-    announce(error.message, true);
-    return false;
-  }
 }
 
 listen($("workspace-add"), "submit", async (e) => {
@@ -645,6 +483,28 @@ listen($("workspace-add"), "submit", async (e) => {
   form.reset();
   await refreshWorkspaces();
   announce("已新增 Workspace。");
+});
+
+$("use-suggested-short-path").addEventListener("click", () => {
+  const input = $("workspace-short-path");
+  input.value = $("workspace-suggested-short-path").textContent;
+  $("workspace-short-path-error").hidden = true;
+  input.focus();
+});
+$("cancel-workspace-short-path").addEventListener("click", () => $("workspace-short-path-dialog").close());
+listen($("workspace-short-path-form"), "submit", async (e) => {
+  const shortPath = $("workspace-short-path").value.trim();
+  const notice = $("workspace-short-path-error");
+  try {
+    await api("/workspaces", "POST", { id: e.currentTarget.dataset.workspaceId, shortPath });
+  } catch (error) {
+    notice.textContent = error.message;
+    notice.hidden = false;
+    return;
+  }
+  $("workspace-short-path-dialog").close();
+  await refreshWorkspaces();
+  announce(shortPath ? "已儲存建置短路徑。" : "已停用建置短路徑。");
 });
 
 listen($("worktree-import"), "submit", async (e) => {
@@ -681,12 +541,15 @@ function renderBuildChoices() {
     workspaceChoice(row, "build", "check build-workspace-card")) : [
     empty("請先在 Workspace 分頁登錄資料夾。"),
   ]));
-  // 目標候選：merge 各 Workspace 已刷新的分支短名（去重）；SHA 直接打字即可
+  renderBuildTargetOptions();
+}
+
+function renderBuildTargetOptions() {
   const list = $("build-target-list");
   const seen = new Set();
   list.replaceChildren();
-  for (const refs of gitDetails.values()) {
-    for (const ref of refs || []) {
+  for (const id of selected) {
+    for (const ref of buildBranchRefs.get(id) || []) {
       const display = ref.replace(/^refs\/(?:heads|remotes)\//, "");
       if (!seen.has(display)) {
         seen.add(display);
@@ -732,6 +595,7 @@ async function checkBuild(body) {
     }
     for (const plan of result) {
       $("preview").append(element("strong", "", plan.workspace));
+      if (plan.shortPath) $("preview").append(element("p", "tb-muted", "建置短路徑 · " + plan.shortPath));
       if (plan.checkoutTarget) {
         $("preview").append(element("p", "tb-muted", "Build 前會先 Checkout 到：" + plan.checkoutTarget +
           (checkout && checkout.submodule ? "（並更新 Submodule）" : "") +
@@ -877,9 +741,12 @@ async function loadPick(ref) {
 }
 
 async function loadBranches() {
-  const { result } = await api("/workspaces/" + pickWorkspaceId + "/branches");
+  const workspaceId = pickWorkspaceId;
+  const { result } = await api("/workspaces/" + workspaceId + "/branches");
   if (result.error) announce("無法讀取分支清單：" + result.error, true);
   pickBranches = result.branches;
+  buildBranchRefs.set(workspaceId, pickBranches.map((branch) => branch.ref));
+  renderBuildTargetOptions();
   openNodes = new Set(["refs", "refs/heads", "refs/remotes"]);
   renderTree();
   renderBranchTable();

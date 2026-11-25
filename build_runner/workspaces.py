@@ -8,6 +8,7 @@ import stat
 import subprocess
 from uuid import uuid4
 
+from .junctions import normalize_short_path
 from .paths import ToolError, file_lock, read_json, write_json
 
 
@@ -130,17 +131,20 @@ def path_key(path):
     return os.path.normcase(str(Path(path).resolve()))
 
 
-def add_workspace(data, name, path):
+def add_workspace(data, name, path, *, short_path=None):
     name = name.strip()
     path = Path(path).expanduser().resolve()
     if not name or not path.is_dir():
         raise ToolError("INVALID_WORKSPACE", "請輸入名稱，並選擇已存在的 Workspace 資料夾。")
+    short_path = normalize_short_path(short_path)
     with file_lock(data / ".workspaces.lock"):
         rows = list_workspaces(data)
         if any(row["name"].casefold() == name.casefold() or path_key(row["path"]) == path_key(path)
                for row in rows):
             raise ToolError("WORKSPACE_EXISTS", "已有相同名稱或資料夾的 Workspace。")
         row = {"id": uuid4().hex, "name": name, "path": str(path)}
+        if short_path:
+            row["shortPath"] = short_path
         write_json(data / "workspaces.json", [*rows, row])
     return row
 

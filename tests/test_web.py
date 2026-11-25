@@ -888,6 +888,74 @@ class WebTests(unittest.TestCase):
                         {"name": "Repo rule", "workspaceId": workspace["id"], "jobId": job_id})["result"]
         self.assertEqual([row["source"] for row in plan["files"]], ["Build/DT/Pkg/bios.rom"])
 
+    @unittest.skipUnless(os.name == "nt", "Uses Windows directory junctions")
+    def test_workspace_can_build_from_a_junction_to_the_repo_root(self):
+        repo = self.root / "A longer example repository folder"
+        workspace = repo / "packages" / "example"
+        step = workspace / "build"
+        step.mkdir(parents=True)
+        subprocess.check_call(["git", "-C", str(repo), "init"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        alias = self.root / "short [example]"
+        row = self.api("POST", "/api/workspaces", {"name": "Short path example", "path": str(workspace)}, code=201)["result"]
+        listed = next(item for item in self.api("GET", "/api/workspaces")["result"] if item["id"] == row["id"])
+        suggested = Path(listed["suggestedShortPath"])
+        self.assertEqual(suggested.parent, Path(workspace.anchor))
+        self.assertRegex(suggested.name, r"^br-[0-9a-f]{8}$")
+        self.assertNotIn("shortPath", listed)
+        self.api("POST", "/api/workspaces", {"id": row["id"], "name": "Renamed short path example"})
+        renamed = next(item for item in self.api("GET", "/api/workspaces")["result"] if item["id"] == row["id"])
+        self.assertEqual(renamed["suggestedShortPath"], str(suggested))
+        edited = self.api("POST", "/api/workspaces", {"id": row["id"], "shortPath": str(alias)})["result"]
+        self.assertEqual(Path(edited["shortPath"]), alias)
+        self.assertEqual(Path(edited["path"]), workspace)
+        self.assertFalse(alias.exists())
+        script = step / "record-path.cmd"
+        script.write_text(
+            '@echo off\n"%~1" -c "import sys; from pathlib import Path; '
+            'Path(\'script-path.txt\').write_text(sys.argv[1], encoding=\'utf-8\')" "%~dp0."\n',
+            encoding="ascii", newline="\r\n",
+        )
+        recipe = {"name": "Run from short path", "steps": [{
+            "cwd": "build", "argv": [sys.executable, "-c",
+                "import os; from pathlib import Path; Path('cwd.txt').write_text(os.getcwd(), encoding='utf-8')"],
+        }, {"cwd": "build", "argv": [str(script), sys.executable]}]}
+        self.api("POST", "/api/recipes", recipe, code=201)
+        spec = {"workspaceIds": [row["id"]], "recipe": recipe["name"]}
+        plan = self.api("POST", "/api/jobs/check", spec)["result"][0]
+        self.assertEqual(Path(plan["shortPath"]), alias)
+        self.assertFalse(alias.exists())
+
+        def build():
+            job = self.api("POST", "/api/jobs", spec, code=201)["result"][0]
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline and job["state"] in ("queued", "running"):
+                time.sleep(0.05)
+                job = self.api("GET", "/api/jobs/" + job["id"])["result"]
+            return job
+
+        for _ in range(2):
+            job = build()
+            self.assertEqual(job["state"], "success", job)
+            expected = alias / "packages" / "example" / "build"
+            self.assertEqual(Path((step / "cwd.txt").read_text(encoding="utf-8")), expected)
+            self.assertEqual(Path((step / "script-path.txt").read_text(encoding="utf-8")), expected)
+            self.assertTrue(alias.samefile(repo))
+            self.assertEqual(Path(job["workspacePath"]), workspace)
+
+        occupied = self.root / "existing directory"
+        occupied.mkdir()
+        marker = occupied / "keep.txt"
+        marker.write_bytes(b"existing data")
+        self.api("POST", "/api/workspaces", {"id": row["id"], "shortPath": str(occupied)})
+        job = build()
+        self.assertEqual(job["state"], "failed", job)
+        self.assertIn("短路徑", job["message"])
+        self.assertEqual(marker.read_bytes(), b"existing data")
+        self.api("POST", "/api/workspaces", {"id": row["id"], "shortPath": "relative"}, code=400)
+        reset = self.api("POST", "/api/workspaces", {"id": row["id"], "shortPath": ""})["result"]
+        self.assertIsNone(reset.get("shortPath"))
+        self.assertTrue(alias.samefile(repo))
+
     def test_workspace_list_defers_dirty_checks(self):
         workspace = self.root / "Dirty sample"
         workspace.mkdir()
