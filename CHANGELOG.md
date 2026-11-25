@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Branch／Commit 左側使用較窄的 ref 資料夾樹，分支清單與搜尋結果集中在右側表格。
+- 修正長 Commit 標題把 Build 表單與佇列撐出欄位的問題。
+- 選定建置目標後才顯示 Checkout 選項，並簡化 Submodule update 標籤。
+- 縮小 Branch／Commit 視窗的分支樹、表格及 Commit 清單字級，統一 Build 頁和視窗內佇列的文字與按鈕字級。
 - Build 頁可單次切換或停用產出物規則，也能把選擇的規則另存到新 Recipe。
 - 指令預覽下方會顯示選用的產出物規則，包括檔案樣式、目的地及 ZIP 設定。
 - 已儲存的 Recipe 與產出物規則組可以複製成新草稿，調整後另存。

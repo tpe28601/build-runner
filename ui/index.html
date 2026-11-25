@@ -103,9 +103,11 @@
             <div class="row"><button id="build-pick" class="tb-btn" type="button" aria-haspopup="dialog" aria-controls="commit-pick"><i data-tb-icon="git-branch"></i>選擇 Branch／Commit…</button>
               <span id="build-picked" class="tb-muted tb-small"></span></div>
             <ol id="build-queue" class="commit-queue" hidden></ol>
-            <label class="check"><input type="checkbox" id="build-submodule" checked><span>Checkout 後更新 Submodule（git submodule update --init --recursive）。</span></label>
-            <label class="check"><input type="checkbox" id="build-fetch"><span>先 fetch origin（目標只存在遠端時用；大 repo 較久）。</span></label>
-            <label class="check"><input type="checkbox" id="build-force"><span>強制切樹（git switch -f：丟棄工作區未提交的追蹤檔案變更；遠端分支已有同名本機分支時重置它到遠端最新；勾選會先確認）。</span></label>
+            <div id="build-checkout-options" class="stack" hidden>
+              <label class="check"><input type="checkbox" id="build-submodule" checked><span>Submodule update</span></label>
+              <label class="check"><input type="checkbox" id="build-fetch"><span>先 fetch origin（目標只存在遠端時用；大 repo 較久）。</span></label>
+              <label class="check"><input type="checkbox" id="build-force"><span>強制切樹（git switch -f：丟棄工作區未提交的追蹤檔案變更；遠端分支已有同名本機分支時重置它到遠端最新；勾選會先確認）。</span></label>
+            </div>
             <fieldset id="build-parameters" class="stack" hidden>
               <legend>3. 選擇參數</legend>
               <div class="editor-fields">
@@ -430,7 +432,7 @@
     <label class="tb-field"><span class="tb-field__label">Filter</span>
       <input id="commit-filter" type="search" class="tb-input" placeholder="依 Refname、Subject、Authors、SHA-1 過濾分支"></label>
     <div class="commit-pick-body">
-      <div id="ref-tree" class="ref-tree"></div>
+      <nav id="ref-tree" class="ref-tree" aria-label="Ref 資料夾"></nav>
       <div id="branch-table" class="branch-table" role="table"></div>
     </div>
     <p id="commit-ref-hint" class="tb-small tb-muted"></p>

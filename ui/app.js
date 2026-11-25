@@ -676,6 +676,7 @@ listen($("import-selected"), "click", async () => {
 listen($("workspace-build"), "click", () => { location.hash = "build"; });
 
 function renderBuildChoices() {
+  renderCheckoutOptions();
   $("build-workspaces").replaceChildren(...(workspaces.length ? workspaces.map((row) =>
     workspaceChoice(row, "build", "check build-workspace-card")) : [
     empty("請先在 Workspace 分頁登錄資料夾。"),
@@ -785,7 +786,9 @@ function renderQueueList(list) {
   list.hidden = !buildQueue.length;
   buildQueue.forEach((item, index) => {
     const line = element("li", "commit-queue-row");
-    line.append(element("span", "commit-queue-label", (index + 1) + ". " + item.label),
+    const label = element("span", "commit-queue-label", (index + 1) + ". " + item.label);
+    label.title = item.label;
+    line.append(label,
                 button("↑", () => moveInQueue(index, index - 1), "tb-btn commit-queue-move"),
                 button("↓", () => moveInQueue(index, index + 1), "tb-btn commit-queue-move"),
                 button("移除", () => { buildQueue.splice(index, 1); renderQueues(); }, "tb-btn commit-queue-move"));
@@ -793,7 +796,14 @@ function renderQueueList(list) {
   });
 }
 
+function renderCheckoutOptions() {
+  const hasTarget = buildQueue.length > 0 || $("build-target").value.trim() !== "";
+  $("build-checkout-options").hidden = !hasTarget;
+  if (!hasTarget) $("build-force").checked = false;
+}
+
 function renderQueues() {
+  renderCheckoutOptions();
   renderQueueList($("commit-pick-queue"));
   renderQueueList($("build-queue"));
   $("commit-pick-clear").hidden = !buildQueue.length;
@@ -805,7 +815,7 @@ function renderQueues() {
 
 // ----- Branch 表格（仿 TortoiseGit 選 log 對話框）：左樹右表，可勾選入佇列 -----
 let pickBranches = [];
-let pickGroup = "all";
+let pickGroup = "refs";
 let pickRef = "";
 let pickSeq = 0;
 let openNodes = new Set();     // 展開中的樹節點 path
@@ -813,35 +823,27 @@ let targetOld = "";            // 編輯 Build 目標前的值（取消時回退
 
 const pickFail = (error) => announce(error.message, true);
 
-// 每個 branch 的完整樹路徑：heads/<name> 或 remotes/<remote>/<name>。
-const branchPath = (branch) => (branch.group === "heads" ? "heads/" : "remotes/") + branch.name;
-
-// 樹含群組節點與葉分支（同 TortoiseGit）：依下一段名稱遞迴分組，最後段為葉。
-function makeNode(prefix, list, label) {
-  const node = { label, path: prefix, count: list.length, children: new Map(), leaves: [] };
-  const buckets = new Map();
-  for (const branch of list) {
-    const rest = branchPath(branch).slice(prefix.length + 1);
-    const cut = rest.indexOf("/");
-    if (cut < 0) { node.leaves.push(branch); continue; }
-    const seg = rest.slice(0, cut);
-    if (!buckets.has(seg)) buckets.set(seg, []);
-    buckets.get(seg).push(branch);
+function makeRefTree(branches) {
+  const root = { label: "refs", path: "refs", children: new Map() };
+  const childFor = (node, label) => {
+    if (!node.children.has(label)) {
+      node.children.set(label, { label, path: node.path + "/" + label, children: new Map() });
+    }
+    return node.children.get(label);
+  };
+  childFor(root, "heads");
+  childFor(root, "remotes");
+  for (const branch of branches) {
+    let folder = root;
+    for (const part of branch.ref.split("/").slice(1, -1)) folder = childFor(folder, part);
   }
-  for (const [seg, sub] of [...buckets.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
-    node.children.set(seg, makeNode(prefix + "/" + seg, sub, seg));
-  }
-  node.leaves.sort((a, b) => a.name.localeCompare(b.name));
-  return node;
+  return root;
 }
 
 function inGroup(branch) {
-  if (pickGroup === "all") return true;
-  const path = branchPath(branch);
-  return path === pickGroup || path.startsWith(pickGroup + "/");
+  return branch.ref.startsWith(pickGroup + "/");
 }
 
-// Filter 字串同時縮減樹與表格（TortoiseGit 行為：不符合的分支不出現在樹上）。
 function filteredBranches() {
   const keyword = $("commit-filter").value.trim().toLowerCase();
   if (!keyword) return pickBranches;
@@ -855,7 +857,7 @@ async function loadPick(ref) {
   if (ref) params.set("ref", ref);
   const { result } = await api("/workspaces/" + pickWorkspaceId + "/commits?" + params);
   if (seq !== pickSeq) return;    // 使用者已點別的分支，丟棄遲到的舊回應
-  pickRef = ref;
+  pickRef = result.resolved;
   $("commit-ref-hint").textContent = result.resolved + " 的 commits（最新 " + result.commits.length +
     " 筆）：勾選 Commit 加入 Build 佇列";
   const list = $("commit-pick-list");
@@ -878,74 +880,60 @@ async function loadBranches() {
   const { result } = await api("/workspaces/" + pickWorkspaceId + "/branches");
   if (result.error) announce("無法讀取分支清單：" + result.error, true);
   pickBranches = result.branches;
-  // 預設展開 All／heads／remotes／各 remote 一層，更深的群組手動展開。
-  openNodes = new Set(["all", "heads", "remotes"]);
-  for (const branch of pickBranches) if (branch.remote) openNodes.add("remotes/" + branch.remote);
+  openNodes = new Set(["refs", "refs/heads", "refs/remotes"]);
   renderTree();
   renderBranchTable();
 }
 
-function renderTree() {
+function renderTree(focusPath, focusToggle = false) {
   const tree = $("ref-tree");
-  tree.replaceChildren();
-  const list = filteredBranches();
-  const makeRow = (depth, active) => {
+  const list = element("ul", "ref-nodes");
+  let nextFocus;
+  const renderNode = (node, target) => {
+    const item = element("li");
+    const active = pickGroup === node.path;
     const row = element("div", "ref-node-row" + (active ? " is-active" : ""));
-    row.style.paddingInlineStart = depth * 16 + "px";
-    tree.append(row);
-    return row;
-  };
-  const leafRow = (branch, depth) => {
-    const path = branchPath(branch);
-    const row = makeRow(depth, pickGroup === path);
-    const btn = button(branch.name.slice(branch.name.lastIndexOf("/") + 1), () => {
-      pickGroup = path;
-      renderTree();
-      renderBranchTable();
-      loadPick(branch.name).catch(pickFail);
-    }, "ref-node ref-leaf");
-    btn.title = branch.ref;
-    row.append(element("span", "ref-arrow"), btn);
-  };
-  const nodeRow = (node, depth) => {
-    const row = makeRow(depth, pickGroup === node.path);
-    const arrow = element("button", "ref-arrow");
-    arrow.type = "button";
     const open = openNodes.has(node.path);
-    const childCount = node.children.size + node.leaves.length;
-    arrow.textContent = childCount ? (open ? "▾" : "▸") : "";
-    if (childCount) {
-      listen(arrow, "click", () => {
-        if (openNodes.has(node.path)) openNodes.delete(node.path); else openNodes.add(node.path);
-        renderTree();
-      });
+    let arrow = element("span", "ref-arrow");
+    if (node.children.size) {
+      arrow = button(open ? "▾" : "▸", () => {
+        if (open) {
+          openNodes.delete(node.path);
+          if (pickGroup.startsWith(node.path + "/")) {
+            pickGroup = node.path;
+            renderBranchTable();
+          }
+        } else {
+          openNodes.add(node.path);
+        }
+        renderTree(node.path, true);
+      }, "ref-arrow");
+      arrow.setAttribute("aria-label", (open ? "收合 " : "展開 ") + node.path);
+      arrow.setAttribute("aria-expanded", String(open));
     }
-    row.append(arrow, button(node.label + " (" + node.count + ")", () => {
+    const select = button(node.label, () => {
       pickGroup = node.path;
-      if (childCount) openNodes.add(node.path);
-      renderTree();
+      if (node.children.size) openNodes.add(node.path);
+      renderTree(node.path);
       renderBranchTable();
-    }, "ref-node"));
-    if (!open) return;
-    const items = [
-      ...[...node.children.values()].map((child) => ({ key: child.label, child })),
-      ...node.leaves.map((branch) => ({ key: branch.name.slice(branch.name.lastIndexOf("/") + 1), branch })),
-    ].sort((a, b) => a.key.localeCompare(b.key));
-    // 單一群組可能有數千分支，節點只渲染前 200 項，其餘交給右側表格。
-    for (const item of items.slice(0, 200)) {
-      if (item.child) nodeRow(item.child, depth + 1); else leafRow(item.branch, depth + 1);
-    }
-    if (items.length > 200) {
-      makeRow(depth + 1, false).append(element("span", "ref-arrow"), button(
-        "⋯ 另有 " + (items.length - 200) + " 項（點此在表格檢視）",
-        () => { pickGroup = node.path; renderTree(); renderBranchTable(); }, "ref-node ref-more"));
+    }, "ref-node");
+    select.title = node.path;
+    select.setAttribute("aria-pressed", String(active));
+    if (node.path === focusPath) nextFocus = focusToggle ? arrow : select;
+    row.append(arrow, select);
+    item.append(row);
+    target.append(item);
+    if (open && node.children.size) {
+      const subfolders = element("ul", "ref-nodes ref-node-children");
+      for (const child of [...node.children.values()].sort((a, b) => a.label.localeCompare(b.label))) {
+        renderNode(child, subfolders);
+      }
+      item.append(subfolders);
     }
   };
-  nodeRow({ label: "All", path: "all", count: list.length, children: new Map(), leaves: [] }, 0);
-  const heads = list.filter((branch) => branch.group === "heads");
-  const remotes = list.filter((branch) => branch.group.startsWith("remotes/"));
-  if (heads.length) nodeRow(makeNode("heads", heads, "heads"), 0);
-  if (remotes.length) nodeRow(makeNode("remotes", remotes, "remotes"), 0);
+  renderNode(makeRefTree(pickBranches), list);
+  tree.replaceChildren(list);
+  nextFocus?.focus({ preventScroll: true });
 }
 
 function renderBranchTable() {
@@ -957,8 +945,9 @@ function renderBranchTable() {
   }
   table.append(head);
   const matched = filteredBranches().filter(inGroup);
+  if (!matched.length) table.append(element("p", "tb-small tb-muted", "沒有符合的分支。"));
   for (const branch of matched.slice(0, 300)) {
-    const row = element("div", "branch-row" + (branch.name === pickRef ? " is-current" : ""));
+    const row = element("div", "branch-row" + (branch.ref === pickRef ? " is-current" : ""));
     row.title = branch.ref;
     const box = element("input");
     box.type = "checkbox";
@@ -971,7 +960,7 @@ function renderBranchTable() {
     // 點列＝下方 commit 清單切到該分支；勾 checkbox 才是加入 Build 佇列。
     listen(row, "click", (event) => {
       if (event.target === box) return;
-      loadPick(branch.name).catch(pickFail);
+      loadPick(branch.ref).catch(pickFail);
     });
     table.append(row);
   }
@@ -985,7 +974,7 @@ listen($("build-pick"), "click", async () => {
   const row = workspaces.find((item) => item.id === [...selected][0]);
   if (!row) throw new Error("請先選擇 Workspace。");
   pickWorkspaceId = row.id;
-  pickGroup = "all";
+  pickGroup = "refs";
   $("commit-filter").value = "";
   $("commit-pick-hint").textContent = "來源：" + row.name + "；勾選 Branch 或 Commit 加入 Build 佇列，可調整順序" +
     (selected.size > 1 ? "；多選 Workspace 時僅依第一個 Workspace 查詢" : "");
@@ -1006,7 +995,7 @@ listen($("build-pick"), "click", async () => {
   }
   renderQueues();
 });
-listen($("commit-filter"), "input", () => { renderTree(); renderBranchTable(); });
+listen($("commit-filter"), "input", renderBranchTable);
 listen($("commit-pick-clear"), "click", () => { buildQueue = []; renderQueues(); });
 listen($("commit-pick-close"), "click", () => $("commit-pick").close());
 // 勾「強制切樹」前必須確認：git switch -f 會丟棄未提交的追蹤檔案變更。
@@ -1022,7 +1011,10 @@ listen($("build-force"), "change", () => {
 // 手動修改 Build 目標代表改走單筆模式；確認後才清佇列，避免誤觸輸入就把排好的目標全丟。
 listen($("build-target"), "beforeinput", () => { targetOld = $("build-target").value; });
 listen($("build-target"), "input", () => {
-  if (!buildQueue.length) return;
+  if (!buildQueue.length) {
+    renderCheckoutOptions();
+    return;
+  }
   if (!window.confirm("手動編輯 Build 目標會清空已排的 " + buildQueue.length + " 個佇列目標，繼續？")) {
     $("build-target").value = targetOld;
     return;
