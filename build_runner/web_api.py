@@ -414,9 +414,10 @@ class Api:
             last = {row["workspaceId"]: row["state"] for row in history.list_history(self.data)}
             # Keep the list fast: "git status" is slow on huge trees and the
             # page fills the dirty badge afterwards via /workspaces/dirty.
+            rows = workspaces.list_workspaces(self.data)
             return ok([{**row, **workspaces.git_state(row["path"], include_dirty=False),
-                        "lastResult": last.get(row["id"]), "suggestedShortPath": junctions.suggest_short_path(row)}
-                       for row in workspaces.list_workspaces(self.data)])
+                        "lastResult": last.get(row["id"]), "suggestedShortPath": junctions.suggest_short_path(row, rows)}
+                       for row in rows])
         if method == "POST" and "id" not in body:
             return ok(workspaces.add_workspace(self.data, string(body, "name"), string(body, "path"),
                                                short_path=body.get("shortPath")), 201)

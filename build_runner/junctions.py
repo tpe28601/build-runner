@@ -10,12 +10,39 @@ import subprocess
 from .paths import ToolError
 
 
-def suggest_short_path(workspace):
+def _alias_base(workspace):
+    # Build tooling chokes on non-ASCII build paths, so keep the alias ASCII-only:
+    # spaces and invalid characters collapse to "_", a name that sanitizes to
+    # nothing falls back to the workspace id hash.
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "_", str(workspace.get("name") or "").strip()).strip("._-")[:60]
+    slug = slug.strip("._-")
+    if not slug:
+        slug = sha256(workspace["id"].encode("utf-8")).hexdigest()[:8]
+    return f"WS-{slug}"
+
+
+def suggest_short_path(workspace, siblings=()):
     path = PureWindowsPath(workspace["path"])
     if not path.is_absolute() or not re.fullmatch(r"[A-Za-z]:", path.drive):
         return None
-    suffix = sha256(workspace["id"].encode("utf-8")).hexdigest()[:8]
-    return str(PureWindowsPath(path.anchor) / f"br-{suffix}")
+    base = _alias_base(workspace)
+    # Suggestions land on each workspace's own drive, so only same-drive siblings
+    # can collide; their configured short paths occupy names just like suggestions.
+    taken = set()
+    for other in siblings:
+        if other["id"] == workspace["id"]:
+            continue
+        if PureWindowsPath(other["path"]).drive.casefold() != path.drive.casefold():
+            continue
+        taken.add(_alias_base(other).casefold())
+        configured = other.get("shortPath")
+        if configured:
+            taken.add(PureWindowsPath(configured).name.casefold())
+    if base.casefold() in taken:
+        base = f"{base}-{workspace['id'][:6]}"
+        if base.casefold() in taken:
+            base = f"WS-{sha256(workspace['id'].encode('utf-8')).hexdigest()[:8]}"
+    return str(PureWindowsPath(path.anchor) / base)
 
 
 def normalize_short_path(value):

@@ -900,11 +900,11 @@ class WebTests(unittest.TestCase):
         listed = next(item for item in self.api("GET", "/api/workspaces")["result"] if item["id"] == row["id"])
         suggested = Path(listed["suggestedShortPath"])
         self.assertEqual(suggested.parent, Path(workspace.anchor))
-        self.assertRegex(suggested.name, r"^br-[0-9a-f]{8}$")
+        self.assertEqual(suggested.name, "WS-Short_path_example")
         self.assertNotIn("shortPath", listed)
         self.api("POST", "/api/workspaces", {"id": row["id"], "name": "Renamed short path example"})
         renamed = next(item for item in self.api("GET", "/api/workspaces")["result"] if item["id"] == row["id"])
-        self.assertEqual(renamed["suggestedShortPath"], str(suggested))
+        self.assertEqual(Path(renamed["suggestedShortPath"]).name, "WS-Renamed_short_path_example")
         edited = self.api("POST", "/api/workspaces", {"id": row["id"], "shortPath": str(alias)})["result"]
         self.assertEqual(Path(edited["shortPath"]), alias)
         self.assertEqual(Path(edited["path"]), workspace)
@@ -955,6 +955,43 @@ class WebTests(unittest.TestCase):
         reset = self.api("POST", "/api/workspaces", {"id": row["id"], "shortPath": ""})["result"]
         self.assertIsNone(reset.get("shortPath"))
         self.assertTrue(alias.samefile(repo))
+
+    @unittest.skipUnless(os.name == "nt", "Uses Windows drive-letter paths")
+    def test_suggested_short_path_follows_the_workspace_name(self):
+        names = ["Sample_2026 PlatformA", "Foo/Bar", "Foo Bar", "測試", "x" * 80, "a" * 59 + ". b",
+                 "CON", "Beta"]
+        created = {}
+        for index, name in enumerate(names):
+            folder = self.root / f"suggestion folder {index}"
+            folder.mkdir()
+            created[name] = self.api("POST", "/api/workspaces",
+                                     {"name": name, "path": str(folder)}, code=201)["result"]
+        listed = {item["id"]: item for item in self.api("GET", "/api/workspaces")["result"]}
+
+        def alias(name):
+            return Path(listed[created[name]["id"]]["suggestedShortPath"]).name
+
+        self.assertEqual(alias("Sample_2026 PlatformA"), "WS-Sample_2026_PlatformA")
+        self.assertRegex(alias("測試"), r"^WS-[0-9a-f]{8}$")
+        self.assertEqual(alias("x" * 80), "WS-" + "x" * 60)
+        self.assertEqual(alias("a" * 59 + ". b"), "WS-" + "a" * 59)  # truncation never ends in "._-"
+        self.assertEqual(alias("CON"), "WS-CON")  # the prefix keeps reserved device names usable
+        self.assertTrue(alias("Foo/Bar").startswith("WS-Foo_Bar-"))
+        self.assertTrue(alias("Foo Bar").startswith("WS-Foo_Bar-"))
+        self.assertNotEqual(alias("Foo/Bar"), alias("Foo Bar"))
+        # a suggestion must be accepted as the configured short path unchanged
+        sample = created["Sample_2026 PlatformA"]
+        suggestion = listed[sample["id"]]["suggestedShortPath"]
+        edited = self.api("POST", "/api/workspaces", {"id": sample["id"], "shortPath": suggestion})["result"]
+        self.assertEqual(edited["shortPath"], suggestion)
+        # a sibling's configured short path also blocks the plain suggestion
+        beta = created["Beta"]
+        anchor = Path(Path(beta["path"]).anchor)
+        occupied = str(anchor / "WS-Beta")
+        self.api("POST", "/api/workspaces", {"id": created["CON"]["id"], "shortPath": occupied})
+        relisted = {item["id"]: item for item in self.api("GET", "/api/workspaces")["result"]}
+        self.assertEqual(relisted[beta["id"]]["suggestedShortPath"],
+                         str(anchor / f"WS-Beta-{beta['id'][:6]}"))
 
     def test_workspace_list_defers_dirty_checks(self):
         workspace = self.root / "Dirty sample"
