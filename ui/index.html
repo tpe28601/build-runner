@@ -292,6 +292,12 @@
               <button id="remove-artifact" class="tb-btn" type="button" disabled>刪除規則組</button>
             </div>
             <label class="tb-field"><span class="tb-field__label">規則組名稱</span><input id="artifact-name" class="tb-input" placeholder="sample-output" required></label>
+            <details>
+              <summary>可用變數</summary>
+              <p class="tb-field__hint">通用（目的地、改名、ZIP 檔名）：<code>{date}</code> <code>{time}</code> <code>{workspace}</code> <code>{branch}</code> <code>{recipe}</code> <code>{jobId}</code> <code>{commit7}</code></p>
+              <p class="tb-field__hint">僅改名可用（每檔）：<code>{name}</code> 檔名、<code>{ext}</code> 副檔名；建置參數用 <code>{param.參數名}</code>。</p>
+              <p class="tb-field__hint">變數值中的非法字元會自動換成底線（空格保留）；輸出檔名撞名時自動附加 <code>_2</code> 後綴，不會蓋檔。</p>
+            </details>
             <div id="artifact-rules" class="stack"></div>
             <div class="row"><button id="add-artifact-rule" class="tb-btn" type="button">新增規則</button><button class="tb-btn tb-btn--primary" type="submit">儲存規則組</button></div>
           </form>
